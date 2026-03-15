@@ -13,25 +13,25 @@ export function AdminSidebar() {
 
   const onLogout = () => {
     logout();
-    navigate('/admin/login');
+    navigate('/admin/login', { replace: true });
   };
 
   return (
     <aside
       className={cn(
-        'sticky top-0 flex h-screen flex-col border-r bg-card px-3 py-4 shadow-sm transition-all duration-200',
+        'sticky top-0 flex h-screen flex-col border-r border-slate-200 bg-white px-3 py-4 shadow-sm transition-all duration-200',
         collapsed ? 'w-20' : 'w-72'
       )}
     >
       <div className="mb-6 flex items-center justify-between px-2">
         <div className="flex items-center gap-2 overflow-hidden">
-          <span className="rounded-lg bg-primary/10 p-2 text-primary">
+          <span className="rounded-lg bg-blue-100 p-2 text-blue-700">
             <Radio size={20} />
           </span>
           {!collapsed && (
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Admin</p>
-              <h2 className="text-sm font-semibold">Rádio OSCEIA</h2>
+              <p className="text-xs uppercase text-slate-500">Admin</p>
+              <h2 className="text-sm font-semibold text-slate-800">Rádio OSCEIA</h2>
             </div>
           )}
         </div>
@@ -48,7 +48,7 @@ export function AdminSidebar() {
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               )
             }
           >
@@ -58,7 +58,7 @@ export function AdminSidebar() {
         ))}
       </nav>
 
-      <div className="space-y-2 border-t pt-4">
+      <div className="space-y-2 border-t border-slate-200 pt-4">
         <Button variant="outline" className="w-full justify-start gap-2" onClick={() => navigate('/')}>
           <Radio size={16} />
           {!collapsed && 'Site Público'}
