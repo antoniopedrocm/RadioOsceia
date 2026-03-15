@@ -1,13 +1,61 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ProgramCard } from '@/components/public/ProgramCard';
 import { PresenterCard } from '@/components/public/PresenterCard';
 import { NowPlayingCard } from '@/components/public/NowPlayingCard';
 import { UpcomingQueue } from '@/components/public/UpcomingQueue';
-import { programs, presenters } from '@/data/mockData';
+import { api } from '@/lib/api';
+import type { Presenter, Program } from '@/types';
+
+interface ApiProgram {
+  id: string;
+  title: string;
+  shortDescription?: string;
+  coverUrl?: string;
+  category?: { name: string } | null;
+  presenter?: { name: string } | null;
+  institution?: { name: string } | null;
+}
+
+interface ApiPresenter {
+  id: string;
+  name: string;
+  shortBio?: string;
+  photoUrl?: string;
+}
 
 export function HomePage() {
+  const [programs, setPrograms] = useState<Program[]>([]);
+  const [presenters, setPresenters] = useState<Presenter[]>([]);
+
+  useEffect(() => {
+    api.get<ApiProgram[]>('/public/institutions/osceia/programs').then((list) => {
+      setPrograms(list.map((item) => ({
+        id: item.id,
+        titulo: item.title,
+        categoria: item.category?.name ?? 'Sem categoria',
+        apresentador: item.presenter?.name ?? 'Não definido',
+        duracao: '-',
+        origem: 'YouTube',
+        instituicao: 'OSCEIA',
+        descricao: item.shortDescription ?? '',
+        capa: item.coverUrl ?? 'https://images.unsplash.com/photo-1478737270239-2f02b77fc618?q=80&w=900'
+      })));
+    }).catch(() => setPrograms([]));
+
+    api.get<ApiPresenter[]>('/public/institutions/osceia/presenters').then((list) => {
+      setPresenters(list.map((item) => ({
+        id: item.id,
+        nome: item.name,
+        bio: item.shortBio ?? '',
+        foto: item.photoUrl ?? 'https://i.pravatar.cc/300',
+        programas: []
+      })));
+    }).catch(() => setPresenters([]));
+  }, []);
+
   return (
     <div className="space-y-8">
       <section className="grid gap-5 rounded-2xl border bg-gradient-to-br from-primary/10 to-secondary/10 p-8 md:grid-cols-2">

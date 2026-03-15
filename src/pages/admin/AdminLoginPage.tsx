@@ -12,15 +12,25 @@ export function AdminLoginPage() {
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
   const { login } = useAdminAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    login(email);
-    if (!keepConnected) {
-      sessionStorage.setItem('admin_session_temporary', 'true');
+    setError(null);
+    setLoading(true);
+    try {
+      await login(email, password);
+      if (!keepConnected) {
+        sessionStorage.setItem('admin_session_temporary', 'true');
+      }
+      navigate('/admin/dashboard');
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Falha no login');
+    } finally {
+      setLoading(false);
     }
-    navigate('/admin/dashboard');
   };
 
   return (
@@ -60,8 +70,9 @@ export function AdminLoginPage() {
               />
               Manter conectado
             </label>
-            <Button className="w-full" type="submit">
-              Entrar no painel
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            <Button className="w-full" type="submit" disabled={loading}>
+              {loading ? 'Entrando...' : 'Entrar no painel'}
             </Button>
           </form>
           <Link to="/" className="mt-4 block text-center text-sm text-primary hover:underline">
