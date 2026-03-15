@@ -18,8 +18,18 @@ export async function playbackRoutes(app: FastifyInstance) {
   app.get('/public/institutions/:slug/now-playing', async (request) => {
     const { slug } = z.object({ slug: z.string() }).parse(request.params);
     const institution = await app.prisma.institution.findUniqueOrThrow({ where: { slug } });
-    const current = await resolveNowPlaying(app, institution.id);
-    return { institution: { id: institution.id, slug: institution.slug, name: institution.name }, nowPlaying: current };
+    const now = new Date();
+    const [current, upNext] = await Promise.all([
+      resolveNowPlaying(app, institution.id, now),
+      resolveUpNext(app, institution.id, now, 5)
+    ]);
+
+    return {
+      institution: { id: institution.id, slug: institution.slug, name: institution.name },
+      nowPlaying: current,
+      nextContent: upNext[0] ?? null,
+      upNext
+    };
   });
 
   app.get('/public/institutions/:slug/up-next', async (request) => {
