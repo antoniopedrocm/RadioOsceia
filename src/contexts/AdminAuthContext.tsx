@@ -1,53 +1,52 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-
-const ADMIN_AUTH_KEY = 'radioosceia_admin_auth';
+import { api, setAccessToken } from '@/lib/api';
+import type { ApiUser } from '@/types/api';
 
 interface AdminAuthContextValue {
   isAuthenticated: boolean;
-  login: (email: string) => void;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
   userEmail: string | null;
+  user: ApiUser | null;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const isAuthenticated = Boolean(user);
 
   useEffect(() => {
-    const stored = localStorage.getItem(ADMIN_AUTH_KEY);
-    if (!stored) {
-      return;
-    }
+    const restore = async () => {
+      try {
+        const me = await api.get<ApiUser>('/auth/me');
+        setUser(me);
+      } catch {
+        setAccessToken(null);
+      }
+    };
 
-    try {
-      const parsed = JSON.parse(stored) as { authenticated: boolean; email: string | null };
-      setIsAuthenticated(parsed.authenticated);
-      setUserEmail(parsed.email);
-    } catch {
-      localStorage.removeItem(ADMIN_AUTH_KEY);
-    }
+    void restore();
   }, []);
 
-  const value = useMemo<AdminAuthContextValue>(
-    () => ({
-      isAuthenticated,
-      userEmail,
-      login: (email: string) => {
-        const payload = { authenticated: true, email };
-        localStorage.setItem(ADMIN_AUTH_KEY, JSON.stringify(payload));
-        setIsAuthenticated(true);
-        setUserEmail(email);
-      },
-      logout: () => {
-        localStorage.removeItem(ADMIN_AUTH_KEY);
-        setIsAuthenticated(false);
-        setUserEmail(null);
+  const value = useMemo<AdminAuthContextValue>(() => ({
+    isAuthenticated,
+    user,
+    userEmail: user?.email ?? null,
+    login: async (email: string, password: string) => {
+      const response = await api.post<{ accessToken: string; user: ApiUser }>('/auth/login', { email, password });
+      setAccessToken(response.accessToken);
+      setUser(response.user);
+    },
+    logout: async () => {
+      try {
+        await api.post('/auth/logout');
+      } finally {
+        setAccessToken(null);
+        setUser(null);
       }
-    }),
-    [isAuthenticated, userEmail]
-  );
+    }
+  }), [isAuthenticated, user]);
 
   return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
 }
