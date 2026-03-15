@@ -12,13 +12,9 @@ import { AdminDashboardPage } from '@/pages/admin/AdminDashboardPage';
 import { AdminProgramasPage } from '@/pages/admin/AdminProgramasPage';
 import { AdminMidiasPage } from '@/pages/admin/AdminMidiasPage';
 import { AdminProgramacaoPage } from '@/pages/admin/AdminProgramacaoPage';
-import { AdminFilaPage } from '@/pages/admin/AdminFilaPage';
 import { AdminApresentadoresPage } from '@/pages/admin/AdminApresentadoresPage';
-import { AdminCategoriasPage } from '@/pages/admin/AdminCategoriasPage';
-import { AdminInstituicoesPage } from '@/pages/admin/AdminInstituicoesPage';
-import { AdminPlayerPage } from '@/pages/admin/AdminPlayerPage';
-import { AdminUsuariosPage } from '@/pages/admin/AdminUsuariosPage';
-import { AdminLogsPage } from '@/pages/admin/AdminLogsPage';
+import { AdminConfiguracoesPage } from '@/pages/admin/AdminConfiguracoesPage';
+import { AdminLoginRedirect, AdminRouteGuard } from '@/components/admin/AdminRouteGuard';
 
 export function AppRoutes() {
   return (
@@ -32,19 +28,20 @@ export function AppRoutes() {
         <Route path="/como-ouvir" element={<ComoOuvirPage />} />
       </Route>
 
-      <Route path="/admin/login" element={<AdminLoginPage />} />
-      <Route path="/admin" element={<AdminLayout />}>
-        <Route index element={<AdminDashboardPage />} />
-        <Route path="programas" element={<AdminProgramasPage />} />
-        <Route path="midias" element={<AdminMidiasPage />} />
-        <Route path="programacao" element={<AdminProgramacaoPage />} />
-        <Route path="fila" element={<AdminFilaPage />} />
-        <Route path="apresentadores" element={<AdminApresentadoresPage />} />
-        <Route path="categorias" element={<AdminCategoriasPage />} />
-        <Route path="instituicoes" element={<AdminInstituicoesPage />} />
-        <Route path="player" element={<AdminPlayerPage />} />
-        <Route path="usuarios" element={<AdminUsuariosPage />} />
-        <Route path="logs" element={<AdminLogsPage />} />
+      <Route path="/admin" element={<AdminLoginRedirect />}>
+        <Route path="login" element={<AdminLoginPage />} />
+      </Route>
+
+      <Route path="/admin" element={<AdminRouteGuard />}>
+        <Route element={<AdminLayout />}>
+          <Route index element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="dashboard" element={<AdminDashboardPage />} />
+          <Route path="programas" element={<AdminProgramasPage />} />
+          <Route path="midias" element={<AdminMidiasPage />} />
+          <Route path="programacao" element={<AdminProgramacaoPage />} />
+          <Route path="apresentadores" element={<AdminApresentadoresPage />} />
+          <Route path="configuracoes" element={<AdminConfiguracoesPage />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
