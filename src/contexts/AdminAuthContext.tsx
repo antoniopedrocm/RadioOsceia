@@ -7,7 +7,7 @@ interface MockAdminUser {
   id: string;
   name: string;
   email: string;
-  role: 'admin';
+  role: 'admin' | 'operador';
   avatarUrl: string;
   institution: Institution;
 }
@@ -83,12 +83,14 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           throw new Error('Preencha e-mail e senha para continuar.');
         }
 
+        const isOperator = trimmedEmail.toLowerCase().includes('operador');
+
         const nextUser: MockAdminUser = {
-          id: 'admin-01',
-          name: 'Administrador Rádio OSCEIA',
+          id: isOperator ? 'operador-01' : 'admin-01',
+          name: isOperator ? 'Operador Rádio OSCEIA' : 'Administrador Rádio OSCEIA',
           email: trimmedEmail,
-          role: 'admin',
-          avatarUrl: 'https://i.pravatar.cc/100?img=12',
+          role: isOperator ? 'operador' : 'admin',
+          avatarUrl: isOperator ? 'https://i.pravatar.cc/100?img=33' : 'https://i.pravatar.cc/100?img=12',
           institution: 'Irmão Áureo'
         };
 
