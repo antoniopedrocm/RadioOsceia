@@ -14,6 +14,7 @@ import { AdminMidiasPage } from '@/pages/admin/AdminMidiasPage';
 import { AdminProgramacaoPage } from '@/pages/admin/AdminProgramacaoPage';
 import { AdminApresentadoresPage } from '@/pages/admin/AdminApresentadoresPage';
 import { AdminConfiguracoesPage } from '@/pages/admin/AdminConfiguracoesPage';
+import { SettingsUsersPage } from '@/pages/admin/SettingsUsersPage';
 import { AdminLoginRedirect, AdminRouteGuard } from '@/components/admin/AdminRouteGuard';
 
 export function AppRoutes() {
@@ -41,6 +42,7 @@ export function AppRoutes() {
           <Route path="programacao" element={<AdminProgramacaoPage />} />
           <Route path="apresentadores" element={<AdminApresentadoresPage />} />
           <Route path="configuracoes" element={<AdminConfiguracoesPage />} />
+          <Route path="configuracoes/usuarios" element={<SettingsUsersPage />} />
         </Route>
       </Route>
 
