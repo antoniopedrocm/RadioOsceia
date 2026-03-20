@@ -17,6 +17,7 @@ import { programRoutes } from './modules/programs/routes.js';
 import { mediaRoutes } from './modules/media/routes.js';
 import { scheduleRoutes } from './modules/schedule/routes.js';
 import { playbackRoutes } from './modules/playback/routes.js';
+import { playbackSequenceRoutes } from './modules/playback-sequences/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { logRoutes } from './modules/logs/routes.js';
 
@@ -35,7 +36,7 @@ export async function buildApp() {
     prefix: '/uploads/'
   });
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error: any, _request, reply) => {
     app.log.error(error);
     reply.status(error.statusCode ?? 500).send({ message: error.message, code: error.code ?? 'INTERNAL_ERROR' });
   });
@@ -50,6 +51,7 @@ export async function buildApp() {
     await programRoutes(v1);
     await mediaRoutes(v1);
     await scheduleRoutes(v1);
+    await playbackSequenceRoutes(v1);
     await playbackRoutes(v1);
     await dashboardRoutes(v1);
     await logRoutes(v1);
