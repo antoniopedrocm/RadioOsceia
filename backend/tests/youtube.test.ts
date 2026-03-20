@@ -11,4 +11,9 @@ describe('parseYouTubeUrl', () => {
     const parsed = parseYouTubeUrl('https://youtu.be/dQw4w9WgXcQ?t=5');
     expect(parsed.embedUrl).toBe('https://www.youtube.com/embed/dQw4w9WgXcQ');
   });
+
+  it('extracts from shorts', () => {
+    const parsed = parseYouTubeUrl('https://www.youtube.com/shorts/dQw4w9WgXcQ');
+    expect(parsed.youtubeVideoId).toBe('dQw4w9WgXcQ');
+  });
 });

@@ -11,6 +11,7 @@ const schema = z.object({
   slug: z.string().optional(),
   shortDescription: z.string().optional(),
   fullDescription: z.string().optional(),
+  description: z.string().optional(),
   coverUrl: z.string().optional(),
   highlightColor: z.string().optional(),
   tags: z.array(z.string()).optional(),

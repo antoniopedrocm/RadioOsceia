@@ -16,12 +16,16 @@ enum UserRole {
 }
 
 enum MediaType {
-  YOUTUBE_VIDEO
-  LOCAL_VIDEO
-  LOCAL_AUDIO
+  PROGRAMA
   VINHETA
   INTRODUCAO
   ENCERRAMENTO
+  CHAMADA
+  AUDIO
+  VIDEO
+  YOUTUBE_VIDEO
+  LOCAL_VIDEO
+  LOCAL_AUDIO
   CHAMADA_INSTITUCIONAL
 }
 
@@ -35,6 +39,21 @@ enum PlaybackOverrideStatus {
   ACTIVE
   ENDED
   CANCELED
+}
+
+enum PlaybackItemStartMode {
+  FIXED_TIME
+  AFTER_PREVIOUS
+}
+
+enum Weekday {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
 }
 
 model Institution {
@@ -64,6 +83,8 @@ model Institution {
   media             Media[]
   scheduleItems     ScheduleItem[]
   playbackOverrides PlaybackOverride[]
+  playbackSequences PlaybackSequence[]
+  scheduleBlocks    ScheduleBlock[]
   auditLogs         AuditLog[]
 }
 
@@ -134,6 +155,7 @@ model Program {
   slug             String
   shortDescription String?
   fullDescription  String?
+  description      String?
   coverUrl         String?
   highlightColor   String?
   tags             String[]
@@ -143,6 +165,8 @@ model Program {
 
   media            Media[]
   scheduleItems    ScheduleItem[]
+  playbackSequences PlaybackSequence[]
+  scheduleBlocks   ScheduleBlock[]
 
   @@unique([institutionId, slug])
 }
@@ -176,6 +200,62 @@ model Media {
 
   scheduleItems   ScheduleItem[]
   playbackOverrides PlaybackOverride[]
+  sequenceItems   PlaybackSequenceItem[]
+}
+
+model PlaybackSequence {
+  id            String   @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  programId     String?
+  program       Program? @relation(fields: [programId], references: [id])
+  title         String
+  description   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         PlaybackSequenceItem[]
+  scheduleBlocks ScheduleBlock[]
+  playbackOverrides PlaybackOverride[]
+}
+
+model PlaybackSequenceItem {
+  id                    String   @id @default(cuid())
+  sequenceId            String
+  sequence              PlaybackSequence @relation(fields: [sequenceId], references: [id])
+  mediaId               String
+  media                 Media @relation(fields: [mediaId], references: [id])
+  orderIndex            Int
+  startMode             PlaybackItemStartMode
+  fixedStartTime        String?
+  relativeOffsetSeconds Int? @default(0)
+  startAfterPrevious    Boolean @default(false)
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([sequenceId, orderIndex])
+}
+
+model ScheduleBlock {
+  id            String   @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  programId     String?
+  program       Program? @relation(fields: [programId], references: [id])
+  sequenceId    String
+  sequence      PlaybackSequence @relation(fields: [sequenceId], references: [id])
+  title         String
+  weekday       Weekday
+  startTime     String
+  endTime       String?
+  timezone      String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([institutionId, weekday, isActive])
 }
 
 model ScheduleItem {
@@ -204,11 +284,14 @@ model PlaybackOverride {
   id              String   @id @default(cuid())
   institutionId   String
   institution     Institution @relation(fields: [institutionId], references: [id])
-  mediaId         String
-  media           Media @relation(fields: [mediaId], references: [id])
+  mediaId         String?
+  media           Media? @relation(fields: [mediaId], references: [id])
+  sequenceId      String?
+  sequence        PlaybackSequence? @relation(fields: [sequenceId], references: [id])
   title           String
   startAt         DateTime
   endAt           DateTime?
+  priority        Int      @default(0)
   status          PlaybackOverrideStatus @default(SCHEDULED)
   notes           String?
   createdByUserId String

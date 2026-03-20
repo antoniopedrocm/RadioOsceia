@@ -1,89 +1,174 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { FastifyInstance } from 'fastify';
-import { MediaType, SourceType } from '@prisma/client';
 import { z } from 'zod';
+import { lookup as mimeLookup } from 'mime-types';
 import { authenticate, requireRole } from '../../middleware/auth.js';
 import { parseYouTubeUrl } from '../../utils/youtube.js';
 import { env } from '../../config/env.js';
+import { createAuditLog } from '../../services/audit-log.service.js';
 
-const schema = z.object({
+const mediaTypeSchema = z.enum(['PROGRAMA', 'VINHETA', 'INTRODUCAO', 'ENCERRAMENTO', 'CHAMADA', 'AUDIO', 'VIDEO']);
+
+const youtubeSchema = z.object({
   institutionId: z.string(),
   programId: z.string().optional().nullable(),
-  categoryId: z.string().optional().nullable(),
   title: z.string().min(2),
-  mediaType: z.nativeEnum(MediaType),
-  sourceType: z.nativeEnum(SourceType),
-  youtubeUrl: z.string().optional(),
-  filePath: z.string().optional(),
-  fileName: z.string().optional(),
-  mimeType: z.string().optional(),
-  fileSize: z.number().int().optional(),
-  publicUrl: z.string().optional(),
-  thumbnailUrl: z.string().optional(),
-  durationSeconds: z.number().int().optional(),
-  notes: z.string().optional(),
-  isFallback: z.boolean().optional(),
-  isActive: z.boolean().optional()
+  mediaType: mediaTypeSchema,
+  youtubeUrl: z.string().url(),
+  durationSeconds: z.number().int().positive(),
+  thumbnailUrl: z.string().optional()
 });
 
-export async function mediaRoutes(app: FastifyInstance) {
-  app.get('/media', { preHandler: [authenticate, requireRole('VIEWER')] }, async (request) => app.prisma.media.findMany({ where: request.authUser?.institutionId ? { institutionId: request.authUser.institutionId } : undefined, include: { program: true, category: true } }));
+const localRegisterSchema = z.object({
+  institutionId: z.string(),
+  programId: z.string().optional().nullable(),
+  title: z.string().min(2),
+  mediaType: mediaTypeSchema,
+  filePath: z.string().min(3),
+  publicUrl: z.string().optional(),
+  durationSeconds: z.number().int().positive()
+});
 
-  app.post('/media', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
-    const body = schema.parse(request.body);
-    let youtube = undefined;
-    if (body.sourceType === 'YOUTUBE') {
-      if (!body.youtubeUrl) throw app.httpErrors.badRequest('youtubeUrl é obrigatório para mídia YouTube');
-      youtube = parseYouTubeUrl(body.youtubeUrl);
-    }
-    return app.prisma.media.create({
-      data: {
-        ...body,
-        youtubeUrl: youtube?.youtubeUrl,
-        youtubeVideoId: youtube?.youtubeVideoId,
-        embedUrl: youtube?.embedUrl
-      }
-    });
+const updateSchema = z.object({
+  title: z.string().min(2).optional(),
+  mediaType: mediaTypeSchema.optional(),
+  durationSeconds: z.number().int().positive().optional(),
+  thumbnailUrl: z.string().optional(),
+  isActive: z.boolean().optional(),
+  programId: z.string().nullable().optional()
+});
+
+async function createMediaAudit(app: FastifyInstance, request: any, action: string, entityId: string, description: string, metadata?: unknown) {
+  await createAuditLog(app, {
+    institutionId: request.authUser?.institutionId ?? undefined,
+    userId: request.authUser?.id,
+    action,
+    entity: 'MEDIA',
+    entityId,
+    description,
+    metadata
+  });
+}
+
+export async function mediaRoutes(app: FastifyInstance) {
+  app.get('/media', { preHandler: [authenticate, requireRole('VIEWER')] }, async (request) => {
+    const institutionId = (request.query as any)?.institutionId ?? request.authUser?.institutionId;
+    return app.prisma.media.findMany({ where: institutionId ? { institutionId } : undefined, orderBy: { createdAt: 'desc' } });
   });
 
-  app.post('/media/upload/local', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
+  app.get('/media/:id', { preHandler: [authenticate, requireRole('VIEWER')] }, async (request) => {
+    const { id } = z.object({ id: z.string() }).parse(request.params);
+    return app.prisma.media.findUniqueOrThrow({ where: { id } });
+  });
+
+  app.post('/media/youtube', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
+    const body = youtubeSchema.parse(request.body);
+    const youtube = parseYouTubeUrl(body.youtubeUrl);
+
+    const media = await app.prisma.media.create({
+      data: {
+        institutionId: body.institutionId,
+        programId: body.programId,
+        title: body.title,
+        mediaType: body.mediaType,
+        sourceType: 'YOUTUBE',
+        youtubeUrl: youtube.youtubeUrl,
+        youtubeVideoId: youtube.youtubeVideoId,
+        embedUrl: youtube.embedUrl,
+        durationSeconds: body.durationSeconds,
+        thumbnailUrl: body.thumbnailUrl,
+        isActive: true
+      }
+    });
+
+    await createMediaAudit(app, request, 'CREATE_YOUTUBE_MEDIA', media.id, `Mídia YouTube criada: ${media.title}`);
+    return media;
+  });
+
+  app.post('/media/local-upload', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const file = await request.file();
     if (!file) throw app.httpErrors.badRequest('Arquivo ausente');
 
-    const institutionSlug = (file.fields.institutionSlug?.value as string | undefined) ?? 'shared';
-    const mediaType = (file.fields.mediaType?.value as string | undefined) ?? 'local_media';
+    const fields = file.fields as any;
+    const institutionId = String(fields.institutionId?.value ?? '');
+    const title = String(fields.title?.value ?? '');
+    const mediaType = mediaTypeSchema.parse(String(fields.mediaType?.value ?? 'VIDEO'));
+    const durationSeconds = Number(fields.durationSeconds?.value);
+    const programId = fields.programId?.value ? String(fields.programId.value) : null;
+
+    if (!institutionId || !title || !Number.isFinite(durationSeconds)) {
+      throw app.httpErrors.badRequest('institutionId, title e durationSeconds são obrigatórios');
+    }
+
+    const institution = await app.prisma.institution.findUniqueOrThrow({ where: { id: institutionId } });
     const now = new Date();
     const year = String(now.getFullYear());
     const month = String(now.getMonth() + 1).padStart(2, '0');
-    const folder = path.join(env.STORAGE_ROOT, institutionSlug, mediaType, year, month);
+    const folder = path.join(env.STORAGE_ROOT, institution.slug, mediaType.toLowerCase(), year, month);
     await fs.mkdir(folder, { recursive: true });
 
     const safeFilename = `${Date.now()}-${file.filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const absolutePath = path.join(folder, safeFilename);
-    await file.toFile(absolutePath);
+    await pipeline(file.file, (await import('node:fs')).createWriteStream(absolutePath));
 
     const stat = await fs.stat(absolutePath);
-    const publicUrl = `/uploads/${institutionSlug}/${mediaType}/${year}/${month}/${safeFilename}`;
+    const publicUrl = `/uploads/${institution.slug}/${mediaType.toLowerCase()}/${year}/${month}/${safeFilename}`;
 
-    return {
-      filePath: absolutePath,
-      fileName: safeFilename,
-      mimeType: file.mimetype,
-      fileSize: stat.size,
-      publicUrl
-    };
+    const media = await app.prisma.media.create({
+      data: {
+        institutionId,
+        programId,
+        title,
+        mediaType,
+        sourceType: 'LOCAL',
+        filePath: absolutePath,
+        fileName: safeFilename,
+        mimeType: file.mimetype,
+        fileSize: stat.size,
+        publicUrl,
+        durationSeconds: Math.trunc(durationSeconds)
+      }
+    });
+
+    await createMediaAudit(app, request, 'CREATE_LOCAL_MEDIA_UPLOAD', media.id, `Upload local criado: ${media.title}`);
+    return media;
+  });
+
+  app.post('/media/local-register', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
+    const body = localRegisterSchema.parse(request.body);
+    const fileName = path.basename(body.filePath);
+
+    const media = await app.prisma.media.create({
+      data: {
+        institutionId: body.institutionId,
+        programId: body.programId,
+        title: body.title,
+        mediaType: body.mediaType,
+        sourceType: 'LOCAL',
+        filePath: body.filePath,
+        fileName,
+        mimeType: mimeLookup(fileName) || null,
+        publicUrl: body.publicUrl ?? body.filePath,
+        durationSeconds: body.durationSeconds
+      }
+    });
+
+    await createMediaAudit(app, request, 'CREATE_LOCAL_MEDIA_REGISTER', media.id, `Mídia local cadastrada manualmente: ${media.title}`);
+    return media;
   });
 
   app.put('/media/:id', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
-    const body = schema.partial().parse(request.body);
+    const body = updateSchema.parse(request.body);
     return app.prisma.media.update({ where: { id }, data: body });
   });
 
   app.delete('/media/:id', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
     await app.prisma.media.delete({ where: { id } });
+    await createMediaAudit(app, request, 'DELETE_MEDIA', id, 'Mídia removida');
     return { success: true };
   });
 }

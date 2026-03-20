@@ -1,86 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { resolveNowPlaying, resolveUpNext } from '../src/services/playback-resolver.service.js';
+import { resolveSequenceTimeline } from '../src/services/playback-resolver.service.js';
 
-describe('resolveNowPlaying', () => {
-  it('returns fallback when no schedule and no override', async () => {
-    const app: any = {
-      prisma: {
-        playbackOverride: { findFirst: async () => null },
-        scheduleItem: { findMany: async () => [] },
-        media: {
-          findFirst: async () => ({
-            id: 'm1',
-            title: 'Fallback',
-            sourceType: 'LOCAL',
-            publicUrl: '/uploads/fallback.mp3'
-          })
-        }
-      }
+describe('resolveSequenceTimeline', () => {
+  it('resolve sequência com FIXED_TIME', () => {
+    const sequence: any = {
+      items: [
+        { id: '1', orderIndex: 1, startMode: 'FIXED_TIME', fixedStartTime: '08:00', media: { id: 'm1', title: 'Intro', sourceType: 'LOCAL', mediaType: 'INTRODUCAO', durationSeconds: 120 } },
+        { id: '2', orderIndex: 2, startMode: 'FIXED_TIME', fixedStartTime: '08:05', media: { id: 'm2', title: 'Talk', sourceType: 'YOUTUBE', mediaType: 'PROGRAMA', durationSeconds: 1800 } }
+      ]
     };
 
-    const nowPlaying = await resolveNowPlaying(app, 'inst');
-    expect(nowPlaying?.source).toBe('fallback');
-    expect(nowPlaying?.media.playback.sourceType).toBe('arquivo_local');
+    const { timeline, conflicts } = resolveSequenceTimeline(sequence, new Date('2025-01-06T00:00:00.000Z'));
+    expect(conflicts).toHaveLength(0);
+    expect(timeline[0].startAt.toISOString()).toContain('T08:00:00.000Z');
+    expect(timeline[1].startAt.toISOString()).toContain('T08:05:00.000Z');
   });
 
-  it('returns next scheduled when no current item and no fallback', async () => {
-    const app: any = {
-      prisma: {
-        playbackOverride: { findFirst: async () => null },
-        scheduleItem: {
-          findMany: async () => ([
-            {
-              id: 's1',
-              title: 'Programa da tarde',
-              weekday: 1,
-              startTime: '15:00',
-              endTime: '16:00',
-              media: { id: 'm1', sourceType: 'YOUTUBE', youtubeVideoId: 'dQw4w9WgXcQ', embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ' },
-              program: null
-            }
-          ])
-        },
-        media: { findFirst: async () => null }
-      }
+  it('resolve sequência com AFTER_PREVIOUS', () => {
+    const sequence: any = {
+      items: [
+        { id: '1', orderIndex: 1, startMode: 'FIXED_TIME', fixedStartTime: '08:00', media: { id: 'm1', title: 'Intro', sourceType: 'LOCAL', mediaType: 'INTRODUCAO', durationSeconds: 120 } },
+        { id: '2', orderIndex: 2, startMode: 'AFTER_PREVIOUS', relativeOffsetSeconds: 10, media: { id: 'm2', title: 'Vinheta', sourceType: 'LOCAL', mediaType: 'VINHETA', durationSeconds: 30 } }
+      ]
     };
 
-    const nowPlaying = await resolveNowPlaying(app, 'inst', new Date('2025-01-06T14:00:00.000Z'));
-    expect(nowPlaying?.source).toBe('next_scheduled');
-    expect(nowPlaying?.media.playback.sourceType).toBe('youtube');
+    const { timeline } = resolveSequenceTimeline(sequence, new Date('2025-01-06T00:00:00.000Z'));
+    expect(timeline[1].startAt.toISOString()).toContain('T08:02:10.000Z');
   });
-});
 
-describe('resolveUpNext', () => {
-  it('returns only future items with requested limit', async () => {
-    const app: any = {
-      prisma: {
-        scheduleItem: {
-          findMany: async () => ([
-            {
-              id: 's1',
-              title: 'Item 1',
-              weekday: 1,
-              startTime: '14:30',
-              endTime: '15:00',
-              media: { id: 'm1', sourceType: 'LOCAL', publicUrl: '/uploads/1.mp3' },
-              program: null
-            },
-            {
-              id: 's2',
-              title: 'Item 2',
-              weekday: 1,
-              startTime: '15:00',
-              endTime: '16:00',
-              media: { id: 'm2', sourceType: 'YOUTUBE', youtubeVideoId: 'dQw4w9WgXcQ', embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ' },
-              program: null
-            }
-          ])
-        }
-      }
+  it('valida conflito em sequência mista', () => {
+    const sequence: any = {
+      items: [
+        { id: '1', orderIndex: 1, startMode: 'FIXED_TIME', fixedStartTime: '08:00', media: { id: 'm1', title: 'Longo', sourceType: 'LOCAL', mediaType: 'AUDIO', durationSeconds: 600 } },
+        { id: '2', orderIndex: 2, startMode: 'FIXED_TIME', fixedStartTime: '08:05', media: { id: 'm2', title: 'Conflito', sourceType: 'LOCAL', mediaType: 'VINHETA', durationSeconds: 30 } }
+      ]
     };
 
-    const upNext = await resolveUpNext(app, 'inst', new Date('2025-01-06T14:00:00.000Z'), 1);
-    expect(upNext).toHaveLength(1);
-    expect(upNext[0]?.id).toBe('s1');
+    const { conflicts } = resolveSequenceTimeline(sequence, new Date('2025-01-06T00:00:00.000Z'));
+    expect(conflicts.length).toBeGreaterThan(0);
   });
 });
