@@ -7,54 +7,52 @@ async function main() {
   const adminPassword = await argon2.hash(process.env.SEED_ADMIN_PASSWORD ?? 'Admin@123456');
   const operatorPassword = await argon2.hash(process.env.SEED_OPERATOR_PASSWORD ?? 'Operador@123456');
 
-  const osceia = await prisma.institution.upsert({
-    where: { slug: 'osceia' },
-    update: {},
-    create: { name: 'OSCEIA', slug: 'osceia', shortName: 'OSCEIA', primaryColor: '#0F766E' }
-  });
-
   const irmaoAureo = await prisma.institution.upsert({
     where: { slug: 'irmao-aureo' },
-    update: {},
+    update: { name: 'Irmão Áureo', shortName: 'Irmão Áureo', primaryColor: '#1E4FAE' },
     create: { name: 'Irmão Áureo', slug: 'irmao-aureo', shortName: 'Irmão Áureo', primaryColor: '#1E4FAE' }
   });
 
-  await prisma.user.upsert({
-    where: { email: 'admin@radioosceia.dev' },
-    update: { passwordHash: adminPassword, role: UserRole.ADMIN, institutionId: osceia.id },
-    create: { name: 'Administrador', email: 'admin@radioosceia.dev', passwordHash: adminPassword, role: UserRole.ADMIN, institutionId: osceia.id }
+  await prisma.institution.deleteMany({
+    where: { slug: { not: 'irmao-aureo' } }
   });
 
   await prisma.user.upsert({
-    where: { email: 'operador@radioosceia.dev' },
-    update: { passwordHash: operatorPassword, role: UserRole.OPERATOR, institutionId: osceia.id },
-    create: { name: 'Operador', email: 'operador@radioosceia.dev', passwordHash: operatorPassword, role: UserRole.OPERATOR, institutionId: osceia.id }
+    where: { email: 'admin@radioirmaoaureo.dev' },
+    update: { passwordHash: adminPassword, role: UserRole.ADMIN, institutionId: irmaoAureo.id },
+    create: { name: 'Administrador', email: 'admin@radioirmaoaureo.dev', passwordHash: adminPassword, role: UserRole.ADMIN, institutionId: irmaoAureo.id }
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'operador@radioirmaoaureo.dev' },
+    update: { passwordHash: operatorPassword, role: UserRole.OPERATOR, institutionId: irmaoAureo.id },
+    create: { name: 'Operador', email: 'operador@radioirmaoaureo.dev', passwordHash: operatorPassword, role: UserRole.OPERATOR, institutionId: irmaoAureo.id }
   });
 
   const program = await prisma.program.upsert({
-    where: { institutionId_slug: { institutionId: osceia.id, slug: 'evangelho-no-lar' } },
+    where: { institutionId_slug: { institutionId: irmaoAureo.id, slug: 'evangelho-no-lar' } },
     update: {},
-    create: { institutionId: osceia.id, title: 'Evangelho no Lar', slug: 'evangelho-no-lar', description: 'Programa semanal', tags: [] }
+    create: { institutionId: irmaoAureo.id, title: 'Evangelho no Lar', slug: 'evangelho-no-lar', description: 'Programa semanal', tags: [] }
   });
 
   const abertura = await prisma.media.create({
     data: {
-      institutionId: osceia.id,
+      institutionId: irmaoAureo.id,
       programId: program.id,
       title: 'Abertura',
       mediaType: 'INTRODUCAO',
       sourceType: SourceType.LOCAL,
-      filePath: '/storage/uploads/osceia/introducao/2026/03/abertura.mp3',
+      filePath: '/storage/uploads/irmao-aureo/introducao/2026/03/abertura.mp3',
       fileName: 'abertura.mp3',
       mimeType: 'audio/mpeg',
-      publicUrl: '/uploads/osceia/introducao/2026/03/abertura.mp3',
+      publicUrl: '/uploads/irmao-aureo/introducao/2026/03/abertura.mp3',
       durationSeconds: 120
     }
   });
 
   const yt = await prisma.media.create({
     data: {
-      institutionId: osceia.id,
+      institutionId: irmaoAureo.id,
       programId: program.id,
       title: 'Palestra principal',
       mediaType: 'PROGRAMA',
@@ -68,7 +66,7 @@ async function main() {
 
   const sequence = await prisma.playbackSequence.create({
     data: {
-      institutionId: osceia.id,
+      institutionId: irmaoAureo.id,
       programId: program.id,
       title: 'Bloco Evangelho no Lar',
       items: {
@@ -82,7 +80,7 @@ async function main() {
 
   await prisma.scheduleBlock.create({
     data: {
-      institutionId: osceia.id,
+      institutionId: irmaoAureo.id,
       programId: program.id,
       sequenceId: sequence.id,
       title: 'Evangelho no Lar - Segunda',

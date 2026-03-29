@@ -1,4 +1,4 @@
-export type Institution = 'Irmão Áureo' | 'OSCEIA';
+export type Institution = 'Irmão Áureo';
 
 export interface Program {
   id: string;

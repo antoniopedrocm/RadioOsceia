@@ -1,7 +1,7 @@
-import { useState } from 'react';
 import type { Institution } from '@/types';
 
+const INSTITUTION: Institution = 'Irmão Áureo';
+
 export function useInstitution() {
-  const [institution, setInstitution] = useState<Institution>('Irmão Áureo');
-  return { institution, setInstitution };
+  return { institution: INSTITUTION };
 }

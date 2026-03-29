@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 
 export function AdminLoginPage() {
-  const [email, setEmail] = useState('admin@radioosceia.dev');
+  const [email, setEmail] = useState('admin@radioirmaoaureo.dev');
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
   const { login } = useAdminAuth();

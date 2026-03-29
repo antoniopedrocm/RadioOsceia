@@ -1,15 +1,7 @@
-import { Select } from '@/components/ui/select';
-import { institutions } from '@/data/mockData';
-import type { Institution } from '@/types';
-
-interface Props { value: Institution; onChange: (v: Institution) => void }
-
-export function InstitutionSwitcher({ value, onChange }: Props) {
+export function InstitutionSwitcher() {
   return (
-    <div className="min-w-44">
-      <Select value={value} onChange={(e) => onChange(e.target.value as Institution)} aria-label="Selecionar instituição">
-        {institutions.map((i) => <option key={i.nome} value={i.nome}>{i.nome}</option>)}
-      </Select>
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700" aria-label="Instituição ativa">
+      Irmão Áureo
     </div>
   );
 }
