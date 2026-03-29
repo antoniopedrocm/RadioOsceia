@@ -127,6 +127,7 @@ export function AdminMidiasPage() {
   })), [mediaState.data]);
 
   const handleCreateMedia = async (payload: MediaCreatePayload) => {
+    console.debug('[AdminMidiasPage] createMedia:start', payload);
     const institutionId = institutionState.data?.id;
     if (!institutionId) {
       throw new Error('Instituição Irmão Áureo não encontrada.');
@@ -138,6 +139,7 @@ export function AdminMidiasPage() {
     ].filter(Boolean).join('\n');
 
     if (payload.source === 'YOUTUBE') {
+      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/youtube' });
       await api.post('/media/youtube', {
         institutionId,
         title: payload.title,
@@ -152,6 +154,7 @@ export function AdminMidiasPage() {
     }
 
     if (payload.source === 'UPLOAD') {
+      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-upload' });
       const formData = new FormData();
       formData.append('institutionId', institutionId);
       formData.append('title', payload.title);
@@ -171,6 +174,7 @@ export function AdminMidiasPage() {
     }
 
     if (payload.source === 'EXISTING_FILE') {
+      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-register' });
       await api.post('/media/local-register', {
         institutionId,
         title: payload.title,
@@ -184,6 +188,7 @@ export function AdminMidiasPage() {
       });
     }
 
+    console.debug('[AdminMidiasPage] createMedia:success', { title: payload.title });
     mediaState.reload();
     setFeedback(`Mídia "${payload.title}" cadastrada com sucesso.`);
     window.setTimeout(() => setFeedback(null), 4000);

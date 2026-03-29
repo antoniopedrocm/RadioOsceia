@@ -125,6 +125,15 @@ function parseFriendlyDuration(value: string): number | null {
   return (hours * 3600) + (minutes * 60) + seconds;
 }
 
+function isYoutubeUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtu.be'].includes(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export function getStatusLabel(status: MediaStatus) {
   if (status === 'ACTIVE') return 'Ativo';
   if (status === 'DRAFT') return 'Rascunho';
@@ -157,12 +166,14 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
     if (!form.source) nextErrors.source = 'Selecione uma origem da mídia.';
 
     const durationSeconds = parseFriendlyDuration(form.duration);
-    if (durationSeconds === null) {
+    if (durationSeconds === null || durationSeconds <= 0) {
       nextErrors.duration = 'Use mm:ss ou hh:mm:ss (ex.: 03:25 ou 01:03:25).';
     }
 
     if (form.source === 'YOUTUBE' && !form.youtubeUrl.trim()) {
       nextErrors.youtubeUrl = 'Informe a URL do YouTube.';
+    } else if (form.source === 'YOUTUBE' && !isYoutubeUrl(form.youtubeUrl.trim())) {
+      nextErrors.youtubeUrl = 'Informe uma URL válida do YouTube.';
     }
 
     if (form.source === 'UPLOAD' && !form.uploadFile) {
@@ -186,9 +197,12 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    event.stopPropagation();
+    console.debug('[MediaCreateModal] submit:start', { source: form.source, title: form.title });
 
     const { nextErrors, durationSeconds } = validate();
     if (Object.keys(nextErrors).length > 0) {
+      console.debug('[MediaCreateModal] submit:validation_error', nextErrors);
       setErrors(nextErrors);
       return;
     }
@@ -233,14 +247,19 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
 
     setIsSubmitting(true);
     setSubmitError(null);
+    console.debug('[MediaCreateModal] submit:payload', payload);
 
     try {
       await onSubmit(payload);
+      console.debug('[MediaCreateModal] submit:success');
       resetAndClose();
     } catch (error) {
+      console.error('[MediaCreateModal] submit:error', error);
       const errorMessage = error instanceof ApiError
         ? getApiErrorMessage(error, 'Não foi possível cadastrar a mídia.')
-        : 'Não foi possível cadastrar a mídia.';
+        : error instanceof Error
+          ? error.message
+          : 'Não foi possível cadastrar a mídia.';
       setSubmitError(errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -260,16 +279,16 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
           </Button>
         </div>
 
-        <form className="space-y-6 p-6" onSubmit={handleSubmit}>
+        <form className="space-y-6 p-6" onSubmit={handleSubmit} noValidate>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <Label htmlFor="media-title">Título</Label>
-              <Input id="media-title" value={form.title} onChange={(event) => setField('title', event.target.value)} placeholder="Ex.: Entrevista especial" />
+              <Input id="media-title" name="title" value={form.title} onChange={(event) => setField('title', event.target.value)} placeholder="Ex.: Entrevista especial" />
               {errors.title && <p className="mt-1 text-xs text-red-600">{errors.title}</p>}
             </div>
             <div>
               <Label htmlFor="media-type">Tipo da mídia</Label>
-              <Select id="media-type" value={form.mediaType} onChange={(event) => setField('mediaType', event.target.value)}>
+              <Select id="media-type" name="mediaType" value={form.mediaType} onChange={(event) => setField('mediaType', event.target.value)}>
                 <option value="">Selecione</option>
                 {MEDIA_TYPE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
@@ -279,7 +298,7 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
             </div>
             <div>
               <Label htmlFor="media-program">Programa vinculado</Label>
-              <Select id="media-program" value={form.programId} onChange={(event) => setField('programId', event.target.value)}>
+              <Select id="media-program" name="programId" value={form.programId} onChange={(event) => setField('programId', event.target.value)}>
                 <option value="">Nenhum programa</option>
                 {programs.map((program) => (
                   <option key={program.id} value={program.id}>{program.title}</option>
@@ -288,12 +307,12 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
             </div>
             <div>
               <Label htmlFor="media-duration">Duração (mm:ss ou hh:mm:ss)</Label>
-              <Input id="media-duration" value={form.duration} onChange={(event) => setField('duration', event.target.value)} placeholder="Ex.: 03:20 ou 01:02:05" />
+              <Input id="media-duration" name="duration" value={form.duration} onChange={(event) => setField('duration', event.target.value)} placeholder="Ex.: 03:20 ou 01:02:05" />
               {errors.duration && <p className="mt-1 text-xs text-red-600">{errors.duration}</p>}
             </div>
             <div>
               <Label htmlFor="media-status">Status</Label>
-              <Select id="media-status" value={form.status} onChange={(event) => setField('status', event.target.value as MediaStatus)}>
+              <Select id="media-status" name="status" value={form.status} onChange={(event) => setField('status', event.target.value as MediaStatus)}>
                 <option value="ACTIVE">Ativo</option>
                 <option value="DRAFT">Rascunho</option>
                 <option value="INACTIVE">Inativo</option>
@@ -303,7 +322,7 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
 
           <div>
             <Label htmlFor="media-notes">Observações</Label>
-            <Textarea id="media-notes" value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Informações adicionais sobre a mídia" />
+            <Textarea id="media-notes" name="notes" value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Informações adicionais sobre a mídia" />
           </div>
 
           <div className="space-y-3">
@@ -320,12 +339,12 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
             <div className="grid gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <Label htmlFor="youtube-url">URL do YouTube</Label>
-                <Input id="youtube-url" value={form.youtubeUrl} onChange={(event) => setField('youtubeUrl', event.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
+                <Input id="youtube-url" name="youtubeUrl" value={form.youtubeUrl} onChange={(event) => setField('youtubeUrl', event.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
                 {errors.youtubeUrl && <p className="mt-1 text-xs text-red-600">{errors.youtubeUrl}</p>}
               </div>
               <div className="md:col-span-2">
                 <Label htmlFor="youtube-thumb">Thumbnail (opcional)</Label>
-                <Input id="youtube-thumb" value={form.thumbnailUrl} onChange={(event) => setField('thumbnailUrl', event.target.value)} placeholder="https://..." />
+                <Input id="youtube-thumb" name="thumbnailUrl" value={form.thumbnailUrl} onChange={(event) => setField('thumbnailUrl', event.target.value)} placeholder="https://..." />
               </div>
             </div>
           )}
@@ -333,9 +352,10 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
           {form.source === 'UPLOAD' && (
             <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
               <Label htmlFor="upload-file">Arquivo local</Label>
-              <Input
-                id="upload-file"
-                type="file"
+                <Input
+                  id="upload-file"
+                  name="uploadFile"
+                  type="file"
                 onChange={(event) => {
                   const nextFile = event.target.files?.[0] ?? null;
                   setField('uploadFile', nextFile);
@@ -355,16 +375,16 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
             <div className="grid gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 md:grid-cols-2">
               <div className="md:col-span-2">
                 <Label htmlFor="existing-file-path">Caminho do arquivo no repositório</Label>
-                <Input id="existing-file-path" value={form.filePath} onChange={(event) => setField('filePath', event.target.value)} placeholder="/var/storage/audio/vinheta.mp3" />
+                <Input id="existing-file-path" name="filePath" value={form.filePath} onChange={(event) => setField('filePath', event.target.value)} placeholder="/var/storage/audio/vinheta.mp3" />
                 {errors.filePath && <p className="mt-1 text-xs text-red-600">{errors.filePath}</p>}
               </div>
               <div>
                 <Label htmlFor="existing-public-url">URL pública (opcional)</Label>
-                <Input id="existing-public-url" value={form.publicUrl} onChange={(event) => setField('publicUrl', event.target.value)} placeholder="https://..." />
+                <Input id="existing-public-url" name="publicUrl" value={form.publicUrl} onChange={(event) => setField('publicUrl', event.target.value)} placeholder="https://..." />
               </div>
               <div>
                 <Label htmlFor="existing-file-name">Nome do arquivo (opcional)</Label>
-                <Input id="existing-file-name" value={form.fileName} onChange={(event) => setField('fileName', event.target.value)} placeholder="vinheta.mp3" />
+                <Input id="existing-file-name" name="fileName" value={form.fileName} onChange={(event) => setField('fileName', event.target.value)} placeholder="vinheta.mp3" />
               </div>
             </div>
           )}
