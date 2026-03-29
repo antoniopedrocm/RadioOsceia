@@ -31,7 +31,7 @@ export function AdminSidebar() {
           {!collapsed && (
             <div>
               <p className="text-xs uppercase text-slate-500">Admin</p>
-              <h2 className="text-sm font-semibold text-slate-800">Rádio OSCEIA</h2>
+              <h2 className="text-sm font-semibold text-slate-800">Rádio Irmão Áureo</h2>
             </div>
           )}
         </div>

@@ -25,7 +25,6 @@ interface AdminAuthContextValue {
   user: MockAdminUser | null;
   login: (email: string, password: string, keepConnected: boolean) => Promise<void>;
   logout: () => void;
-  updateInstitution: (institution: Institution) => void;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
@@ -55,7 +54,6 @@ function readPersistedAuth(): PersistedAuth | null {
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MockAdminUser | null>(null);
-  const [keepConnected, setKeepConnected] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const isAuthenticated = Boolean(user);
 
@@ -64,7 +62,6 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       const restored = readPersistedAuth();
       if (restored?.isAuthenticated) {
         setUser(restored.user);
-        setKeepConnected(restored.keepConnected);
       }
     } finally {
       setIsLoading(false);
@@ -87,7 +84,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
         const nextUser: MockAdminUser = {
           id: isOperator ? 'operador-01' : 'admin-01',
-          name: isOperator ? 'Operador Rádio OSCEIA' : 'Administrador Rádio OSCEIA',
+          name: isOperator ? 'Operador Rádio Irmão Áureo' : 'Administrador Rádio Irmão Áureo',
           email: trimmedEmail,
           role: isOperator ? 'operador' : 'admin',
           avatarUrl: isOperator ? 'https://i.pravatar.cc/100?img=33' : 'https://i.pravatar.cc/100?img=12',
@@ -102,31 +99,14 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
         clearPersistedAuth();
         getStorage(remember).setItem(STORAGE_KEY, JSON.stringify(persistedPayload));
-        setKeepConnected(remember);
         setUser(nextUser);
       },
       logout: () => {
         clearPersistedAuth();
         setUser(null);
-      },
-      updateInstitution: (institution) => {
-        if (!user) {
-          return;
-        }
-
-        const nextUser = { ...user, institution };
-        const persistedPayload: PersistedAuth = {
-          isAuthenticated: true,
-          keepConnected,
-          user: nextUser
-        };
-
-        clearPersistedAuth();
-        getStorage(keepConnected).setItem(STORAGE_KEY, JSON.stringify(persistedPayload));
-        setUser(nextUser);
       }
     }),
-    [isAuthenticated, isLoading, user, keepConnected]
+    [isAuthenticated, isLoading, user]
   );
 
   return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;

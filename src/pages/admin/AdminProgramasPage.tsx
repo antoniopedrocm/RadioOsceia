@@ -8,7 +8,7 @@ import { PageHeader } from '@/components/admin/PageHeader';
 const programas = [
   { nome: 'Mensagem de Luz', apresentador: 'Ana Clara', categoria: 'Reflexão', status: 'Ativo' },
   { nome: 'Jornal da Esperança', apresentador: 'Rafael Dias', categoria: 'Jornal', status: 'Ativo' },
-  { nome: 'Momento Musical', apresentador: 'Equipe OSCEIA', categoria: 'Musical', status: 'Rascunho' }
+  { nome: 'Momento Musical', apresentador: 'Equipe Irmão Áureo', categoria: 'Musical', status: 'Rascunho' }
 ];
 
 export function AdminProgramasPage() {

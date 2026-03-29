@@ -56,7 +56,7 @@ const EMPTY_DASHBOARD: DashboardSummary = {
 const EMPTY_TIMELINE: TimelineBlock[] = [];
 
 export function useNowPlaying() {
-  const loader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/osceia/now-playing', { signal }), []);
+  const loader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/irmao-aureo/now-playing', { signal }), []);
 
   return useApiResource(loader, {
     initialData: null as NowPlayingResponse['nowPlaying'] | null,
@@ -66,7 +66,7 @@ export function useNowPlaying() {
 }
 
 export function useUpcomingQueue() {
-  const loader = useCallback((signal: AbortSignal) => api.get<UpNextItem[]>('/public/institutions/osceia/up-next', { signal }), []);
+  const loader = useCallback((signal: AbortSignal) => api.get<UpNextItem[]>('/public/institutions/irmao-aureo/up-next', { signal }), []);
 
   return useApiResource(loader, {
     initialData: EMPTY_UPCOMING,
@@ -75,7 +75,7 @@ export function useUpcomingQueue() {
 }
 
 export function usePrograms() {
-  const loader = useCallback((signal: AbortSignal) => api.get<ApiProgram[]>('/public/institutions/osceia/programs', { signal }), []);
+  const loader = useCallback((signal: AbortSignal) => api.get<ApiProgram[]>('/public/institutions/irmao-aureo/programs', { signal }), []);
 
   const mapData = useCallback((list: ApiProgram[]): Program[] => list.map((item) => ({
       id: item.id,
@@ -84,7 +84,7 @@ export function usePrograms() {
       apresentador: item.presenter?.name ?? 'Não definido',
       duracao: '-',
       origem: 'YouTube',
-      instituicao: 'OSCEIA',
+      instituicao: 'Irmão Áureo',
       descricao: item.shortDescription ?? '',
       capa: item.coverUrl ?? 'https://images.unsplash.com/photo-1478737270239-2f02b77fc618?q=80&w=900'
     })), []);
@@ -97,7 +97,7 @@ export function usePrograms() {
 }
 
 export function usePresenters() {
-  const loader = useCallback((signal: AbortSignal) => api.get<ApiPresenter[]>('/public/institutions/osceia/presenters', { signal }), []);
+  const loader = useCallback((signal: AbortSignal) => api.get<ApiPresenter[]>('/public/institutions/irmao-aureo/presenters', { signal }), []);
 
   const mapData = useCallback((list: ApiPresenter[]) => list.map((item) => ({
       id: item.id,
@@ -125,10 +125,10 @@ export function useDashboardSummary() {
 
 export function useScheduleTimeline(weekday: string) {
   const timelineLoader = useCallback(
-    (signal: AbortSignal) => api.get<TimelineResponse>(`/public/institutions/osceia/timeline?weekday=${weekday}`, { signal }),
+    (signal: AbortSignal) => api.get<TimelineResponse>(`/public/institutions/irmao-aureo/timeline?weekday=${weekday}`, { signal }),
     [weekday]
   );
-  const nowPlayingLoader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/osceia/now-playing', { signal }), []);
+  const nowPlayingLoader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/irmao-aureo/now-playing', { signal }), []);
 
   const mapTimeline = useCallback((response: TimelineResponse) => response.blocks ?? EMPTY_TIMELINE, []);
   const mapPlayback = useCallback((response: NowPlayingResponse) => ({
