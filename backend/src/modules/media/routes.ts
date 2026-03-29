@@ -13,7 +13,7 @@ const mediaTypeSchema = z.enum(['PROGRAMA', 'VINHETA', 'INTRODUCAO', 'ENCERRAMEN
 const mediaStatusSchema = z.enum(['ACTIVE', 'DRAFT', 'INACTIVE']);
 
 const youtubeSchema = z.object({
-  institutionId: z.string(),
+  institutionId: z.string().optional(),
   programId: z.string().optional().nullable(),
   title: z.string().min(2),
   mediaType: mediaTypeSchema,
@@ -25,7 +25,7 @@ const youtubeSchema = z.object({
 });
 
 const localRegisterSchema = z.object({
-  institutionId: z.string(),
+  institutionId: z.string().optional(),
   programId: z.string().optional().nullable(),
   title: z.string().min(2),
   mediaType: mediaTypeSchema,
@@ -57,6 +57,22 @@ async function createMediaAudit(app: FastifyInstance, request: any, action: stri
   });
 }
 
+function resolveInstitutionId(app: FastifyInstance, request: any, payloadInstitutionId?: string | null) {
+  const normalizedPayloadInstitutionId = payloadInstitutionId?.trim() || null;
+  const authInstitutionId = request.authUser?.institutionId ?? null;
+
+  if (normalizedPayloadInstitutionId && authInstitutionId && normalizedPayloadInstitutionId !== authInstitutionId) {
+    throw app.httpErrors.forbidden('institutionId informado não corresponde à instituição do usuário autenticado');
+  }
+
+  const resolvedInstitutionId = normalizedPayloadInstitutionId ?? authInstitutionId;
+  if (!resolvedInstitutionId) {
+    throw app.httpErrors.badRequest('Não foi possível determinar a instituição. Faça login novamente ou informe institutionId.');
+  }
+
+  return resolvedInstitutionId;
+}
+
 export async function mediaRoutes(app: FastifyInstance) {
   app.get('/media', { preHandler: [authenticate, requireRole('VIEWER')] }, async (request) => {
     const institutionId = (request.query as any)?.institutionId ?? request.authUser?.institutionId;
@@ -70,12 +86,13 @@ export async function mediaRoutes(app: FastifyInstance) {
 
   app.post('/media/youtube', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const body = youtubeSchema.parse(request.body);
-    app.log.info({ route: '/media/youtube', institutionId: body.institutionId, mediaType: body.mediaType, programId: body.programId }, 'media:create youtube request');
+    const institutionId = resolveInstitutionId(app, request, body.institutionId);
+    app.log.info({ route: '/media/youtube', institutionId, payloadInstitutionId: body.institutionId ?? null, mediaType: body.mediaType, programId: body.programId }, 'media:create youtube request');
     const youtube = parseYouTubeUrl(body.youtubeUrl);
 
     const media = await app.prisma.media.create({
       data: {
-        institutionId: body.institutionId,
+        institutionId,
         programId: body.programId,
         title: body.title,
         mediaType: body.mediaType,
@@ -99,17 +116,18 @@ export async function mediaRoutes(app: FastifyInstance) {
     if (!file) throw app.httpErrors.badRequest('Arquivo ausente');
 
     const fields = file.fields as any;
-    const institutionId = String(fields.institutionId?.value ?? '');
+    const rawInstitutionId = fields.institutionId?.value ? String(fields.institutionId.value) : undefined;
+    const institutionId = resolveInstitutionId(app, request, rawInstitutionId);
     const title = String(fields.title?.value ?? '');
     const mediaType = mediaTypeSchema.parse(String(fields.mediaType?.value ?? 'VIDEO'));
     const durationSeconds = Number(fields.durationSeconds?.value);
     const programId = fields.programId?.value ? String(fields.programId.value) : null;
     const status = fields.status?.value ? mediaStatusSchema.parse(String(fields.status.value)) : 'ACTIVE';
     const notes = fields.notes?.value ? String(fields.notes.value) : null;
-    app.log.info({ route: '/media/local-upload', institutionId, mediaType, programId }, 'media:create local-upload request');
+    app.log.info({ route: '/media/local-upload', institutionId, payloadInstitutionId: rawInstitutionId ?? null, mediaType, programId }, 'media:create local-upload request');
 
-    if (!institutionId || !title || !Number.isFinite(durationSeconds)) {
-      throw app.httpErrors.badRequest('institutionId, title e durationSeconds são obrigatórios');
+    if (!title || !Number.isFinite(durationSeconds)) {
+      throw app.httpErrors.badRequest('title e durationSeconds são obrigatórios');
     }
 
     const institution = await app.prisma.institution.findUniqueOrThrow({ where: { id: institutionId } });
@@ -150,12 +168,13 @@ export async function mediaRoutes(app: FastifyInstance) {
 
   app.post('/media/local-register', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const body = localRegisterSchema.parse(request.body);
-    app.log.info({ route: '/media/local-register', institutionId: body.institutionId, mediaType: body.mediaType, programId: body.programId }, 'media:create local-register request');
+    const institutionId = resolveInstitutionId(app, request, body.institutionId);
+    app.log.info({ route: '/media/local-register', institutionId, payloadInstitutionId: body.institutionId ?? null, mediaType: body.mediaType, programId: body.programId }, 'media:create local-register request');
     const fileName = path.basename(body.filePath);
 
     const media = await app.prisma.media.create({
       data: {
-        institutionId: body.institutionId,
+        institutionId,
         programId: body.programId,
         title: body.title,
         mediaType: body.mediaType,

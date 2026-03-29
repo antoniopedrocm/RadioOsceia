@@ -12,12 +12,6 @@ interface ApiProgram {
   title: string;
 }
 
-interface ApiInstitution {
-  id: string;
-  name: string;
-  slug: string;
-}
-
 interface ApiMedia {
   id: string;
   title: string;
@@ -94,13 +88,6 @@ export function AdminMidiasPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const institutionLoader = useCallback((signal: AbortSignal) => api.get<ApiInstitution>('/public/institutions/irmao-aureo', { signal }), []);
-
-  const institutionState = useApiResource(institutionLoader, {
-    initialData: null as ApiInstitution | null,
-    fallbackMessage: 'Não foi possível carregar a instituição padrão.'
-  });
-
   const programsLoader = useCallback((signal: AbortSignal) => api.get<ApiProgram[]>('/programs', { signal }), []);
   const programsState = useApiResource(programsLoader, {
     initialData: [] as ApiProgram[],
@@ -113,8 +100,8 @@ export function AdminMidiasPage() {
     fallbackMessage: 'Não foi possível carregar a listagem de mídias.'
   });
 
-  const isLoading = institutionState.isLoading || programsState.isLoading || mediaState.isLoading;
-  const errorMessage = institutionState.errorMessage || programsState.errorMessage || mediaState.errorMessage;
+  const isLoading = programsState.isLoading || mediaState.isLoading;
+  const errorMessage = programsState.errorMessage || mediaState.errorMessage;
 
   const tableRows = useMemo(() => mediaState.data.map((media) => ({
     id: media.id,
@@ -128,10 +115,6 @@ export function AdminMidiasPage() {
 
   const handleCreateMedia = async (payload: MediaCreatePayload) => {
     console.debug('[AdminMidiasPage] createMedia:start', payload);
-    const institutionId = institutionState.data?.id;
-    if (!institutionId) {
-      throw new Error('Instituição Irmão Áureo não encontrada.');
-    }
 
     const notesWithStatus = [
       `[status:${payload.status}]`,
@@ -141,7 +124,6 @@ export function AdminMidiasPage() {
     if (payload.source === 'YOUTUBE') {
       console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/youtube' });
       await api.post('/media/youtube', {
-        institutionId,
         title: payload.title,
         mediaType: payload.mediaType,
         programId: payload.programId,
@@ -156,7 +138,6 @@ export function AdminMidiasPage() {
     if (payload.source === 'UPLOAD') {
       console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-upload' });
       const formData = new FormData();
-      formData.append('institutionId', institutionId);
       formData.append('title', payload.title);
       formData.append('mediaType', payload.mediaType);
       formData.append('durationSeconds', String(payload.durationSeconds));
@@ -176,7 +157,6 @@ export function AdminMidiasPage() {
     if (payload.source === 'EXISTING_FILE') {
       console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-register' });
       await api.post('/media/local-register', {
-        institutionId,
         title: payload.title,
         mediaType: payload.mediaType,
         filePath: payload.filePath,
@@ -214,7 +194,7 @@ export function AdminMidiasPage() {
       {!isLoading && errorMessage ? (
         <EmptyState
           title="Não foi possível carregar as mídias"
-          description={getApiErrorMessage(mediaState.error ?? programsState.error ?? institutionState.error ?? errorMessage)}
+          description={getApiErrorMessage(mediaState.error ?? programsState.error ?? errorMessage)}
           tone="warning"
         />
       ) : null}
