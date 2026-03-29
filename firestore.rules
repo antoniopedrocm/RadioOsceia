@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdminOrOperator() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'operador'];
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (request.auth.uid == uid || isAdminOrOperator());
+    }
+
+    match /programs/{docId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+    }
+
+    match /presenters/{docId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+    }
+
+    match /media/{docId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+    }
+
+    match /playbackSequences/{sequenceId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+
+      match /items/{itemId} {
+        allow read: if true;
+        allow write: if isAdminOrOperator();
+      }
+    }
+
+    match /scheduleBlocks/{docId} {
+      allow read: if true;
+      allow write: if isAdminOrOperator();
+    }
+
+    match /auditLogs/{docId} {
+      allow read, write: if isAdminOrOperator();
+    }
+  }
+}

@@ -15,7 +15,7 @@ export function UpcomingQueue() {
         ) : errorMessage ? (
           <EmptyState
             title="Não foi possível carregar os dados"
-            description={`${errorMessage} Verifique se o backend está em execução.`}
+            description={`${errorMessage} Verifique se os serviços Firebase estão disponíveis.`}
             tone="warning"
             compact
           />

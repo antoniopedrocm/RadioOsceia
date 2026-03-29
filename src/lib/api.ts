@@ -1,10 +1,24 @@
-const FALLBACK_API_URL = 'http://localhost:3333/api/v1';
+import {
+  addDoc,
+  collection,
+  doc,
+  getCountFromServer,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  where
+} from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/lib/firebase';
+import { parseYoutubeUrl } from '@/lib/youtube';
+
 const REQUEST_TIMEOUT_MS = 10000;
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL ?? FALLBACK_API_URL).replace(/\/$/, '');
-
 let token: string | null = localStorage.getItem('radioosceia_access_token');
-const pendingRequests = new Map<string, Promise<unknown>>();
 
 export type ApiErrorCode = 'NETWORK_ERROR' | 'HTTP_ERROR' | 'TIMEOUT' | 'INVALID_RESPONSE' | 'UNKNOWN_ERROR';
 
@@ -33,146 +47,182 @@ export function setAccessToken(nextToken: string | null) {
   }
 }
 
-async function parseJsonSafely<T>(response: Response): Promise<T | null> {
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) {
-    return null;
-  }
-
-  try {
-    return await response.json() as T;
-  } catch {
-    return null;
-  }
-}
-
-function buildUrl(path: string) {
-  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
-}
-
-
-function createRequestKey(path: string, init?: RequestInit) {
-  const method = init?.method ?? 'GET';
-  return `${method.toUpperCase()}:${buildUrl(path)}`;
-}
-
 function normalizeApiError(error: unknown): ApiError {
   if (error instanceof ApiError) {
     return error;
   }
 
-  if (error instanceof DOMException && error.name === 'AbortError') {
-    return new ApiError({
-      code: 'TIMEOUT',
-      message: 'A requisição demorou mais do que o esperado. Tente novamente em instantes.'
-    });
-  }
-
   if (error instanceof Error) {
     return new ApiError({
       code: 'NETWORK_ERROR',
-      message: 'Não foi possível conectar ao backend. Verifique se o servidor está em execução.',
+      message: error.message || 'Falha ao acessar recursos do Firebase.',
       details: error
     });
   }
 
   return new ApiError({
     code: 'UNKNOWN_ERROR',
-    message: 'Ocorreu um erro inesperado ao consultar a API.',
+    message: 'Erro inesperado ao consultar dados.',
     details: error
   });
 }
 
 export function getApiErrorMessage(error: unknown, fallback = 'Não foi possível carregar os dados.') {
   const apiError = error instanceof ApiError ? error : normalizeApiError(error);
+  return apiError.message || fallback;
+}
 
-  switch (apiError.code) {
-    case 'TIMEOUT':
-      return 'A requisição expirou. Tente novamente em instantes.';
-    case 'NETWORK_ERROR':
-      return 'Servidor indisponível no momento. Verifique se o backend está em execução.';
-    case 'INVALID_RESPONSE':
-      return 'A API retornou uma resposta inválida. Tente novamente.';
-    case 'HTTP_ERROR':
-      return apiError.message || fallback;
-    default:
-      return fallback;
-  }
+async function withTimeout<T>(promise: Promise<T>) {
+  const timer = new Promise<never>((_, reject) => {
+    window.setTimeout(() => reject(new ApiError({ code: 'TIMEOUT', message: 'A operação expirou no Firebase.' })), REQUEST_TIMEOUT_MS);
+  });
+
+  return Promise.race([promise, timer]);
+}
+
+async function getPublicPrograms() {
+  const snapshot = await getDocs(query(collection(db, 'programs'), where('isActive', '==', true), orderBy('title', 'asc')));
+  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => ({ id: item.id, ...item.data() }));
+}
+
+async function getPresenters() {
+  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true), orderBy('name', 'asc')));
+  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => ({ id: item.id, ...item.data() }));
+}
+
+async function getAdminPrograms() {
+  const snapshot = await getDocs(query(collection(db, 'programs'), orderBy('title', 'asc')));
+  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => ({ id: item.id, ...item.data() }));
+}
+
+async function getAdminMedia() {
+  const snapshot = await getDocs(query(collection(db, 'media'), orderBy('createdAt', 'desc')));
+  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => ({ id: item.id, ...item.data() }));
+}
+
+async function getDashboardSummary() {
+  const [programs, media, blocks] = await Promise.all([
+    getCountFromServer(collection(db, 'programs')),
+    getCountFromServer(collection(db, 'media')),
+    getCountFromServer(query(collection(db, 'scheduleBlocks'), where('weekday', '==', new Date().getDay()), where('isActive', '==', true)))
+  ]);
+
+  const nowPlayingFn = httpsCallable(functions, 'getNowPlaying');
+  const upNextFn = httpsCallable(functions, 'getUpNext');
+
+  const [nowPlayingResponse, upNextResponse] = await Promise.all([
+    nowPlayingFn({ institutionSlug: 'irmao-aureo' }),
+    upNextFn({ institutionSlug: 'irmao-aureo', limit: 5 })
+  ]);
+
+  const nowPlayingData = nowPlayingResponse.data as { nowPlaying: { title: string } | null };
+  const upNextData = upNextResponse.data as { upNext: Array<{ id: string; title: string; startTime: string }> };
+
+  return {
+    programs: programs.data().count,
+    media: media.data().count,
+    scheduledToday: blocks.data().count,
+    nowPlaying: nowPlayingData.nowPlaying,
+    upNext: upNextData.upNext
+  };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const requestKey = createRequestKey(path, init);
-
-  if ((init?.method ?? 'GET').toUpperCase() === 'GET' && pendingRequests.has(requestKey)) {
-    return pendingRequests.get(requestKey) as Promise<T>;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  const runRequest = async () => {
   try {
-    const providedHeaders = new Headers(init?.headers ?? {});
-    const isFormDataBody = init?.body instanceof FormData;
+    const method = (init?.method ?? 'GET').toUpperCase();
 
-    if (!isFormDataBody && !providedHeaders.has('Content-Type')) {
-      providedHeaders.set('Content-Type', 'application/json');
+    if (method === 'GET' && path === '/public/institutions/irmao-aureo/programs') {
+      return await withTimeout(getPublicPrograms()) as T;
     }
 
-    if (token && !providedHeaders.has('Authorization')) {
-      providedHeaders.set('Authorization', `Bearer ${token}`);
+    if (method === 'GET' && path === '/public/institutions/irmao-aureo/presenters') {
+      return await withTimeout(getPresenters()) as T;
     }
 
-    const response = await fetch(buildUrl(path), {
-      ...init,
-      signal: init?.signal ?? controller.signal,
-      headers: providedHeaders
-    });
+    if (method === 'GET' && path.startsWith('/public/institutions/irmao-aureo/timeline')) {
+      const weekday = Number(new URLSearchParams(path.split('?')[1]).get('weekday') ?? new Date().getDay());
+      const fn = httpsCallable(functions, 'getTimeline');
+      const result = await withTimeout(fn({ institutionSlug: 'irmao-aureo', weekday }));
+      return ((result as { data: T }).data);
+    }
 
-    const payload = await parseJsonSafely<unknown>(response);
+    if (method === 'GET' && path === '/public/institutions/irmao-aureo/now-playing') {
+      const fn = httpsCallable(functions, 'getNowPlaying');
+      const result = await withTimeout(fn({ institutionSlug: 'irmao-aureo' }));
+      return ((result as { data: T }).data);
+    }
 
-    if (!response.ok) {
-      const message = typeof payload === 'object' && payload && 'message' in payload && typeof payload.message === 'string'
-        ? payload.message
-        : `A API respondeu com status ${response.status}.`;
+    if (method === 'GET' && path === '/public/institutions/irmao-aureo/up-next') {
+      const fn = httpsCallable(functions, 'getUpNext');
+      const result = await withTimeout(fn({ institutionSlug: 'irmao-aureo' }));
+      return (((result as { data: { upNext: unknown } }).data).upNext as T);
+    }
 
-      throw new ApiError({
-        code: 'HTTP_ERROR',
-        status: response.status,
-        message,
-        details: payload
+    if (method === 'GET' && path === '/dashboard/summary') {
+      return await withTimeout(getDashboardSummary()) as T;
+    }
+
+    if (method === 'GET' && path === '/programs') {
+      return await withTimeout(getAdminPrograms()) as T;
+    }
+
+    if (method === 'GET' && path === '/media') {
+      return await withTimeout(getAdminMedia()) as T;
+    }
+
+    if (method === 'POST' && path === '/media/youtube') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const fn = httpsCallable(functions, 'createYoutubeMedia');
+      const result = await withTimeout(fn(payload));
+      return ((result as { data: T }).data);
+    }
+
+    if (method === 'POST' && path === '/playback-sequences') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const fn = httpsCallable(functions, 'createPlaybackSequence');
+      const result = await withTimeout(fn(payload));
+      return ((result as { data: T }).data);
+    }
+
+    if (method === 'POST' && path === '/schedule-blocks') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const fn = httpsCallable(functions, 'saveScheduleBlock');
+      const result = await withTimeout(fn(payload));
+      return ((result as { data: T }).data);
+    }
+
+    if (method === 'POST' && path === '/bootstrap/seed') {
+      const fn = httpsCallable(functions, 'bootstrapSeedData');
+      const result = await withTimeout(fn({}));
+      return ((result as { data: T }).data);
+    }
+
+    if (method === 'POST' && path === '/media/local-register') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const parsed = parseYoutubeUrl(String(payload.publicUrl || payload.filePath || ''));
+      const ref = doc(collection(db, 'media'));
+      await setDoc(ref, {
+        title: payload.title,
+        mediaType: payload.mediaType,
+        sourceType: 'EXTERNAL_PLACEHOLDER',
+        youtubeUrl: parsed.youtubeUrl,
+        youtubeVideoId: parsed.youtubeVideoId,
+        embedUrl: parsed.embedUrl,
+        thumbnailUrl: parsed.thumbnailUrl,
+        durationSeconds: Number(payload.durationSeconds ?? 0),
+        programId: payload.programId ?? null,
+        notes: payload.notes ?? null,
+        isActive: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
+      return ({ id: ref.id } as T);
     }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
-
-    if (payload === null) {
-      throw new ApiError({
-        code: 'INVALID_RESPONSE',
-        status: response.status,
-        message: 'A API retornou uma resposta inválida.',
-        details: response
-      });
-    }
-
-    return payload as T;
+    throw new ApiError({ code: 'HTTP_ERROR', status: 404, message: `Rota Firebase não mapeada: ${method} ${path}` });
   } catch (error) {
     throw normalizeApiError(error);
-  } finally {
-    window.clearTimeout(timeoutId);
-    pendingRequests.delete(requestKey);
   }
-  };
-
-  const promise = runRequest();
-
-  if ((init?.method ?? 'GET').toUpperCase() === 'GET') {
-    pendingRequests.set(requestKey, promise as Promise<unknown>);
-  }
-
-  return promise;
 }
 
 export const api = {
@@ -183,4 +233,4 @@ export const api = {
   del: <T>(path: string, init?: RequestInit) => request<T>(path, { ...init, method: 'DELETE' })
 };
 
-export { API_BASE_URL, FALLBACK_API_URL, REQUEST_TIMEOUT_MS };
+export { REQUEST_TIMEOUT_MS, token };

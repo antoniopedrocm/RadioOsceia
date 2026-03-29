@@ -1,9 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
+import { auth, configureAuthPersistence, db } from '@/lib/firebase';
 
-const STORAGE_KEY = 'radioosceia_admin_auth';
-
-interface MockAdminUser {
+interface AdminUser {
   id: string;
   name: string;
   email: string;
@@ -12,60 +13,67 @@ interface MockAdminUser {
   institution: Institution;
 }
 
-interface PersistedAuth {
-  isAuthenticated: boolean;
-  keepConnected: boolean;
-  user: MockAdminUser;
-}
-
 interface AdminAuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   userEmail: string | null;
-  user: MockAdminUser | null;
+  user: AdminUser | null;
   login: (email: string, password: string, keepConnected: boolean) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
 
-function getStorage(keepConnected: boolean) {
-  return keepConnected ? localStorage : sessionStorage;
-}
+async function upsertProfile(firebaseUser: FirebaseUser): Promise<AdminUser> {
+  const userRef = doc(db, 'users', firebaseUser.uid);
+  const snapshot = await getDoc(userRef);
 
-function clearPersistedAuth() {
-  localStorage.removeItem(STORAGE_KEY);
-  sessionStorage.removeItem(STORAGE_KEY);
-}
+  const role = snapshot.exists() ? String(snapshot.data().role ?? 'operador') : 'operador';
+  const institution = 'Irmão Áureo' as Institution;
 
-function readPersistedAuth(): PersistedAuth | null {
-  const sessionData = sessionStorage.getItem(STORAGE_KEY);
-  if (sessionData) {
-    return JSON.parse(sessionData) as PersistedAuth;
-  }
+  const profile: AdminUser = {
+    id: firebaseUser.uid,
+    name: snapshot.data()?.name ?? firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
+    email: firebaseUser.email ?? '',
+    role: role === 'admin' ? 'admin' : 'operador',
+    avatarUrl: snapshot.data()?.avatarUrl ?? `https://i.pravatar.cc/100?u=${firebaseUser.uid}`,
+    institution
+  };
 
-  const localData = localStorage.getItem(STORAGE_KEY);
-  if (localData) {
-    return JSON.parse(localData) as PersistedAuth;
-  }
+  await setDoc(userRef, {
+    ...profile,
+    institution,
+    updatedAt: serverTimestamp(),
+    createdAt: snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp()
+  }, { merge: true });
 
-  return null;
+  return profile;
 }
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<MockAdminUser | null>(null);
+  const [user, setUser] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const isAuthenticated = Boolean(user);
 
   useEffect(() => {
-    try {
-      const restored = readPersistedAuth();
-      if (restored?.isAuthenticated) {
-        setUser(restored.user);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      try {
+        if (!firebaseUser) {
+          setUser(null);
+          return;
+        }
+
+        const profile = await upsertProfile(firebaseUser);
+        setUser(profile);
+      } catch (error) {
+        console.error('Falha ao sincronizar perfil administrativo no Firestore.', error);
+        setUser(null);
+      } finally {
+        setIsLoading(false);
       }
-    } finally {
-      setIsLoading(false);
-    }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const value = useMemo<AdminAuthContextValue>(
@@ -75,34 +83,17 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       user,
       userEmail: user?.email ?? null,
       login: async (email: string, password: string, remember) => {
-        const trimmedEmail = email.trim();
-        if (!trimmedEmail || !password.trim()) {
+        if (!email.trim() || !password.trim()) {
           throw new Error('Preencha e-mail e senha para continuar.');
         }
 
-        const isOperator = trimmedEmail.toLowerCase().includes('operador');
-
-        const nextUser: MockAdminUser = {
-          id: isOperator ? 'operador-01' : 'admin-01',
-          name: isOperator ? 'Operador Rádio Irmão Áureo' : 'Administrador Rádio Irmão Áureo',
-          email: trimmedEmail,
-          role: isOperator ? 'operador' : 'admin',
-          avatarUrl: isOperator ? 'https://i.pravatar.cc/100?img=33' : 'https://i.pravatar.cc/100?img=12',
-          institution: 'Irmão Áureo'
-        };
-
-        const persistedPayload: PersistedAuth = {
-          isAuthenticated: true,
-          keepConnected: remember,
-          user: nextUser
-        };
-
-        clearPersistedAuth();
-        getStorage(remember).setItem(STORAGE_KEY, JSON.stringify(persistedPayload));
-        setUser(nextUser);
+        await configureAuthPersistence(remember);
+        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+        const profile = await upsertProfile(credential.user);
+        setUser(profile);
       },
-      logout: () => {
-        clearPersistedAuth();
+      logout: async () => {
+        await signOut(auth);
         setUser(null);
       }
     }),

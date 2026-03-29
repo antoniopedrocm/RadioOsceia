@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 
 export function AdminLoginPage() {
-  const [email, setEmail] = useState('admin@radioirmaoaureo.dev');
+  const [email, setEmail] = useState('admin@irmaoaureo.dev');
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
   const { login } = useAdminAuth();
@@ -74,7 +74,7 @@ export function AdminLoginPage() {
               {loading ? 'Entrando...' : 'Entrar no painel'}
             </Button>
           </form>
-          <p className="mt-4 text-center text-xs text-slate-500">Acesso exclusivo para administradores autorizados.</p>
+          <p className="mt-4 text-center text-xs text-slate-500">Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).</p>
           <Link to="/" className="mt-4 block text-center text-sm font-medium text-blue-600 hover:underline">
             Voltar ao site público
           </Link>

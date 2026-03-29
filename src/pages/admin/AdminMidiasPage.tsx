@@ -136,22 +136,7 @@ export function AdminMidiasPage() {
     }
 
     if (payload.source === 'UPLOAD') {
-      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-upload' });
-      const formData = new FormData();
-      formData.append('title', payload.title);
-      formData.append('mediaType', payload.mediaType);
-      formData.append('durationSeconds', String(payload.durationSeconds));
-      formData.append('status', payload.status);
-      formData.append('notes', notesWithStatus);
-      if (payload.programId) {
-        formData.append('programId', payload.programId);
-      }
-      formData.append('file', payload.file);
-
-      await api.request('/media/local-upload', {
-        method: 'POST',
-        body: formData
-      });
+      throw new Error('Upload local ainda não está habilitado nesta fase Firebase. Use YouTube por enquanto.');
     }
 
     if (payload.source === 'EXISTING_FILE') {
