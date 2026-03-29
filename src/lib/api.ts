@@ -112,14 +112,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const runRequest = async () => {
   try {
+    const providedHeaders = new Headers(init?.headers ?? {});
+    const isFormDataBody = init?.body instanceof FormData;
+
+    if (!isFormDataBody && !providedHeaders.has('Content-Type')) {
+      providedHeaders.set('Content-Type', 'application/json');
+    }
+
+    if (token && !providedHeaders.has('Authorization')) {
+      providedHeaders.set('Authorization', `Bearer ${token}`);
+    }
+
     const response = await fetch(buildUrl(path), {
       ...init,
       signal: init?.signal ?? controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(init?.headers ?? {})
-      }
+      headers: providedHeaders
     });
 
     const payload = await parseJsonSafely<unknown>(response);

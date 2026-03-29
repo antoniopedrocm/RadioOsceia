@@ -10,6 +10,7 @@ import { env } from '../../config/env.js';
 import { createAuditLog } from '../../services/audit-log.service.js';
 
 const mediaTypeSchema = z.enum(['PROGRAMA', 'VINHETA', 'INTRODUCAO', 'ENCERRAMENTO', 'CHAMADA', 'AUDIO', 'VIDEO']);
+const mediaStatusSchema = z.enum(['ACTIVE', 'DRAFT', 'INACTIVE']);
 
 const youtubeSchema = z.object({
   institutionId: z.string(),
@@ -18,7 +19,9 @@ const youtubeSchema = z.object({
   mediaType: mediaTypeSchema,
   youtubeUrl: z.string().url(),
   durationSeconds: z.number().int().positive(),
-  thumbnailUrl: z.string().optional()
+  thumbnailUrl: z.string().optional(),
+  status: mediaStatusSchema.optional(),
+  notes: z.string().optional()
 });
 
 const localRegisterSchema = z.object({
@@ -28,7 +31,9 @@ const localRegisterSchema = z.object({
   mediaType: mediaTypeSchema,
   filePath: z.string().min(3),
   publicUrl: z.string().optional(),
-  durationSeconds: z.number().int().positive()
+  durationSeconds: z.number().int().positive(),
+  status: mediaStatusSchema.optional(),
+  notes: z.string().optional()
 });
 
 const updateSchema = z.object({
@@ -79,7 +84,8 @@ export async function mediaRoutes(app: FastifyInstance) {
         embedUrl: youtube.embedUrl,
         durationSeconds: body.durationSeconds,
         thumbnailUrl: body.thumbnailUrl,
-        isActive: true
+        notes: body.notes,
+        isActive: body.status ? body.status === 'ACTIVE' : true
       }
     });
 
@@ -97,6 +103,8 @@ export async function mediaRoutes(app: FastifyInstance) {
     const mediaType = mediaTypeSchema.parse(String(fields.mediaType?.value ?? 'VIDEO'));
     const durationSeconds = Number(fields.durationSeconds?.value);
     const programId = fields.programId?.value ? String(fields.programId.value) : null;
+    const status = fields.status?.value ? mediaStatusSchema.parse(String(fields.status.value)) : 'ACTIVE';
+    const notes = fields.notes?.value ? String(fields.notes.value) : null;
 
     if (!institutionId || !title || !Number.isFinite(durationSeconds)) {
       throw app.httpErrors.badRequest('institutionId, title e durationSeconds são obrigatórios');
@@ -128,7 +136,9 @@ export async function mediaRoutes(app: FastifyInstance) {
         mimeType: file.mimetype,
         fileSize: stat.size,
         publicUrl,
-        durationSeconds: Math.trunc(durationSeconds)
+        durationSeconds: Math.trunc(durationSeconds),
+        notes,
+        isActive: status === 'ACTIVE'
       }
     });
 
@@ -151,7 +161,9 @@ export async function mediaRoutes(app: FastifyInstance) {
         fileName,
         mimeType: mimeLookup(fileName) || null,
         publicUrl: body.publicUrl ?? body.filePath,
-        durationSeconds: body.durationSeconds
+        durationSeconds: body.durationSeconds,
+        notes: body.notes,
+        isActive: body.status ? body.status === 'ACTIVE' : true
       }
     });
 
