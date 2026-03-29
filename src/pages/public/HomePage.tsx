@@ -28,7 +28,7 @@ export function HomePage() {
         ) : programsState.errorMessage ? (
           <EmptyState
             title="Não foi possível carregar os programas"
-            description={`${programsState.errorMessage} A página continuará disponível mesmo com Firestore/Functions indisponíveis.`}
+            description={`${programsState.errorMessage} A página continuará disponível mesmo com Firestore indisponível.`}
             tone="warning"
           />
         ) : programsState.data.length ? (
@@ -51,7 +51,7 @@ export function HomePage() {
         ) : presentersState.errorMessage ? (
           <EmptyState
             title="Não foi possível carregar os apresentadores"
-            description={`${presentersState.errorMessage} Verifique a disponibilidade do Firebase para ver os dados reais.`}
+            description={`${presentersState.errorMessage} Verifique a disponibilidade do Firestore para ver os dados reais.`}
             tone="warning"
           />
         ) : presentersState.data.length ? (
