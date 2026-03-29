@@ -16,7 +16,7 @@ interface ApiMedia {
   id: string;
   title: string;
   mediaType: string;
-  sourceType: 'YOUTUBE' | 'LOCAL';
+  sourceType: 'YOUTUBE' | 'LOCAL' | 'EXTERNAL_PLACEHOLDER' | string;
   durationSeconds: number | null;
   program?: { title: string } | null;
   isActive: boolean;
@@ -58,8 +58,13 @@ function getMediaTypeLabel(mediaType: string) {
 }
 
 function getSourceLabel(media: ApiMedia) {
-  if (media.sourceType === 'YOUTUBE') {
+  const source = media.sourceType.toUpperCase();
+  if (source === 'YOUTUBE') {
     return 'YouTube';
+  }
+
+  if (source === 'EXTERNAL_PLACEHOLDER') {
+    return 'Arquivo externo';
   }
 
   const fileName = media.fileName?.toLowerCase() ?? '';

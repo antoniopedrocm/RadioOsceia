@@ -12,7 +12,7 @@ export function AdminDashboardPage() {
       {errorMessage && (
         <EmptyState
           title="Não foi possível conectar ao Firebase"
-          description="Verifique se o Firestore/Functions está em execução. O painel continuará acessível, mas exibirá estados vazios até a API responder."
+          description="Verifique se o Firestore está em execução. O painel continuará acessível, mas exibirá estados vazios até os dados carregarem."
           tone="warning"
         />
       )}
@@ -33,7 +33,7 @@ export function AdminDashboardPage() {
             {isLoading ? (
               <LoadingState title="Carregando resumo" description="Consultando os indicadores operacionais da rádio." compact />
             ) : (
-              <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">Esta área está preparada para gráficos futuros. Os cards acima e a coluna lateral já usam dados reais da API.</div>
+              <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">Esta área está preparada para gráficos futuros. Os cards acima e a coluna lateral já usam dados reais do Firestore.</div>
             )}
           </CardContent>
         </Card>
@@ -47,7 +47,7 @@ export function AdminDashboardPage() {
               ) : summary.nowPlaying ? (
                 <p className="font-semibold">{summary.nowPlaying.title}</p>
               ) : (
-                <EmptyState title="Sem conteúdo no ar" description="Nenhuma transmissão ativa foi informada pela API." compact />
+                <EmptyState title="Sem conteúdo no ar" description="Nenhuma transmissão ativa foi encontrada na grade do Firestore." compact />
               )}
             </CardContent>
           </Card>
@@ -59,7 +59,7 @@ export function AdminDashboardPage() {
               ) : summary.upNext.length ? (
                 summary.upNext.map((item) => <p key={item.id}>{item.startTime} • {item.title}</p>)
               ) : (
-                <EmptyState title="Sem itens" description="Nenhum próximo item foi retornado pelas Functions." compact />
+                <EmptyState title="Sem itens" description="Nenhum próximo item foi encontrado para a grade atual." compact />
               )}
             </CardContent>
           </Card>

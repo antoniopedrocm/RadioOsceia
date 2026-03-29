@@ -20,7 +20,7 @@ export function ScheduleAdminPage() {
   const [weekday, setWeekday] = useState('MONDAY');
   const { flattened, isLoading, timelineErrorMessage, nowPlaying, upNext, playbackErrorMessage } = useScheduleTimeline(weekday);
 
-  const backendMessage = 'Não foi possível conectar ao Firebase. Verifique se os emuladores/serviços estão em execução.';
+  const backendMessage = 'Não foi possível carregar a grade pelo Firestore. Verifique se o projeto Firebase está acessível.';
 
   return (
     <div className="space-y-4">

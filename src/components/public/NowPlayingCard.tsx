@@ -15,8 +15,8 @@ export function NowPlayingCard() {
           <LoadingState title="Carregando transmissão atual" description="Buscando o conteúdo que está no ar agora." compact />
         ) : errorMessage ? (
           <EmptyState
-            title="Servidor indisponível no momento"
-            description={`${errorMessage} Verifique se o Firebase Emulator Suite está ativo.`}
+            title="Dados indisponíveis no momento"
+            description={`${errorMessage} Verifique se o Firestore está acessível.`}
             tone="warning"
             compact
           />
