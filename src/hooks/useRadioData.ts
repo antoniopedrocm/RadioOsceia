@@ -119,7 +119,7 @@ export function useDashboardSummary() {
 
   return useApiResource(loader, {
     initialData: EMPTY_DASHBOARD,
-    fallbackMessage: 'Não foi possível carregar o resumo do dashboard.'
+    fallbackMessage: 'Não foi possível carregar o resumo do dashboard no Firebase.'
   });
 }
 

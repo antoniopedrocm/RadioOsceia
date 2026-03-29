@@ -1,99 +1,110 @@
-# Rádio / Web TV Institucional
+# Rádio / Web TV Institucional — Arquitetura Firebase
 
-Aplicação com frontend em React + TypeScript + Vite e backend em Fastify + Prisma + PostgreSQL.
+Aplicação com frontend em **React + TypeScript + Vite** e backend serverless em **Firebase**.
 
-## Visão geral
+## Arquitetura final
 
-- `src/`: frontend público e administrativo.
-- `backend/`: API REST em `/api/v1`, autenticação JWT, Prisma, uploads locais e dashboard.
-- O frontend usa `VITE_API_URL` para descobrir a API.
-- Se o backend estiver offline, a UI continua abrindo e exibe estados amigáveis de indisponibilidade em vez de quebrar a tela.
+- **Firebase Hosting**: entrega do frontend.
+- **Firebase Authentication**: login administrativo (`admin` e `operador`).
+- **Cloud Firestore**: persistência principal.
+- **Cloud Functions**: regras de negócio (mídia YouTube, timeline, now playing, up next e resumo de dashboard).
+- **Instituição ativa única**: **Irmão Áureo**.
+
+## Modelagem no Firestore
+
+- `settings/app`
+- `users/{uid}`
+- `programs/{programId}`
+- `presenters/{presenterId}`
+- `media/{mediaId}`
+- `playbackSequences/{sequenceId}`
+- `playbackSequences/{sequenceId}/items/{itemId}`
+- `scheduleBlocks/{blockId}`
+- `auditLogs/{logId}`
 
 ## Pré-requisitos
 
-- Node.js 18+
+- Node.js 20+
 - npm
-- PostgreSQL
+- Firebase CLI (`npm i -g firebase-tools`)
 
-## Subindo o frontend
+## Configuração de ambiente
 
-1. Instale as dependências na raiz do projeto:
+1. Instale dependências da raiz:
    ```bash
    npm install
    ```
-2. Crie o arquivo de ambiente a partir do exemplo:
+2. Instale dependências das Functions:
    ```bash
-   cp .env.example .env
-   ```
-3. Confira a URL da API no `.env`:
-   ```env
-   VITE_API_URL=http://localhost:3333/api/v1
-   ```
-4. Inicie o servidor de desenvolvimento:
-   ```bash
-   npm run dev
-   ```
-
-Frontend por padrão: `http://localhost:5173`.
-
-## Subindo o backend
-
-1. Entre na pasta do backend:
-   ```bash
-   cd backend
-   ```
-2. Instale as dependências:
-   ```bash
-   npm install
+   npm --prefix functions install
    ```
 3. Crie o arquivo de ambiente:
    ```bash
-   cp .env.example .env
+   cp .env.example .env.local
    ```
-4. Revise as variáveis principais (`PORT`, `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`). No Prisma ORM v7, a URL do banco é lida em `backend/prisma.config.ts` (via `env("DATABASE_URL")`).
-5. Gere o cliente do Prisma:
-   ```bash
-   npx prisma generate
-   ```
-6. Aplique o schema no banco. Use uma das opções abaixo:
-   ```bash
-   npx prisma migrate dev --name init
-   ```
-   ou
-   ```bash
-   npx prisma db push
-   ```
-7. Rode o seed:
-   ```bash
-   npm run prisma:seed
-   ```
-8. Inicie a API:
-   ```bash
-   npm run dev
-   ```
+4. Ajuste as chaves Firebase do seu projeto no `.env.local`.
 
-Backend por padrão: `http://localhost:3333`.
+## Rodando local com Firebase Emulator Suite
 
-## Fluxo local recomendado
+Em um terminal:
 
-1. Suba o backend em `http://localhost:3333`.
-2. Suba o frontend em `http://localhost:5173`.
-3. Navegue normalmente pela aplicação.
-4. Se o backend não estiver ativo, a aplicação frontend continuará carregando e mostrará mensagens como:
-   - "Servidor indisponível no momento"
-   - "Não foi possível carregar os dados"
-   - "Verifique se o backend está em execução"
+```bash
+npm run dev
+```
+
+Em outro terminal:
+
+```bash
+npm run dev:emulators
+```
+
+UI do frontend: `http://localhost:5173`.
+UI dos emuladores: `http://localhost:4000`.
+
+## Seed de desenvolvimento
+
+> Recomendado com emuladores ligados.
+
+Execute o bootstrap inicial via callable function:
+
+```bash
+npm run seed:firebase
+```
+
+O seed cria:
+
+- Configuração da instituição `Irmão Áureo`
+- 1 admin e 1 operador
+- Programa inicial
+- Apresentador inicial
+- Mídia YouTube de exemplo
+- Sequência de reprodução
+- Bloco de programação
 
 ## Credenciais de desenvolvimento
 
-- Email: `admin@radioosceia.dev`
-- Senha: `Admin@123456`
+- **Admin**: `admin@irmaoaureo.dev` / `Admin@123456`
+- **Operador**: `operador@irmaoaureo.dev` / `Operador@123456`
 
-## Principais endpoints
+## Cloud Functions principais
 
-- Auth: `/api/v1/auth/login`, `/api/v1/auth/logout`, `/api/v1/auth/me`
-- Público: `/api/v1/public/institutions/:slug/*`
-- Admin CRUD: `/api/v1/{institutions,users,presenters,categories,programs,media,schedule-items,playback-overrides}`
-- Upload local: `/api/v1/media/upload/local`
-- Dashboard: `/api/v1/dashboard/summary`
-- Logs: `/api/v1/logs`
+- `createYoutubeMedia`
+- `createPlaybackSequence`
+- `saveScheduleBlock`
+- `getNowPlaying`
+- `getUpNext`
+- `getTimeline`
+- `getDashboardSummary`
+- `bootstrapSeedData`
+
+## Integração frontend
+
+A camada antiga HTTP (`localhost:3333/api/v1`) foi substituída por integração Firebase:
+
+- Leitura/escrita direta no Firestore para entidades simples.
+- Chamada de Cloud Functions para lógica crítica (tocando agora/fila/timeline/dashboard e criação de mídia YouTube).
+- Auth admin via Firebase Authentication com perfil/autorização em `users/{uid}`.
+
+## Legado
+
+O diretório `backend/` (Fastify/Prisma/PostgreSQL) foi mantido apenas como legado temporário e **não é mais necessário** para executar a aplicação migrada.

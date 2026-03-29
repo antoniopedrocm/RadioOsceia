@@ -16,7 +16,7 @@ export function NowPlayingCard() {
         ) : errorMessage ? (
           <EmptyState
             title="Servidor indisponível no momento"
-            description={`${errorMessage} Verifique se o backend está em execução em localhost:3333.`}
+            description={`${errorMessage} Verifique se o Firebase Emulator Suite está ativo.`}
             tone="warning"
             compact
           />

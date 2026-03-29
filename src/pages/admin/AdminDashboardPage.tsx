@@ -11,17 +11,17 @@ export function AdminDashboardPage() {
     <div className="space-y-5">
       {errorMessage && (
         <EmptyState
-          title="Não foi possível conectar ao backend"
-          description="Verifique se o servidor está em execução em localhost:3333. O painel continuará acessível, mas exibirá estados vazios até a API responder."
+          title="Não foi possível conectar ao Firebase"
+          description="Verifique se o Firestore/Functions está em execução. O painel continuará acessível, mas exibirá estados vazios até a API responder."
           tone="warning"
         />
       )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <DashboardStatCard title="Total de programas" value={isLoading ? '...' : String(summary.programs ?? 0)} icon={Clapperboard} trend={errorMessage ? 'Aguardando backend' : 'Dados reais'} />
-        <DashboardStatCard title="Total de mídias" value={isLoading ? '...' : String(summary.media ?? 0)} icon={Library} trend={errorMessage ? 'Aguardando backend' : 'Dados reais'} />
+        <DashboardStatCard title="Total de programas" value={isLoading ? '...' : String(summary.programs ?? 0)} icon={Clapperboard} trend={errorMessage ? 'Aguardando Firebase' : 'Dados reais'} />
+        <DashboardStatCard title="Total de mídias" value={isLoading ? '...' : String(summary.media ?? 0)} icon={Library} trend={errorMessage ? 'Aguardando Firebase' : 'Dados reais'} />
         <DashboardStatCard title="Conteúdo no ar" value={summary.nowPlaying ? '01' : '00'} icon={Activity} trend={summary.nowPlaying ? 'Transmissão ativa' : 'Sem conteúdo'} />
-        <DashboardStatCard title="Agendamentos do dia" value={isLoading ? '...' : String(summary.scheduledToday ?? 0)} icon={CalendarCheck2} trend={errorMessage ? 'Aguardando backend' : 'Dados reais'} />
+        <DashboardStatCard title="Agendamentos do dia" value={isLoading ? '...' : String(summary.scheduledToday ?? 0)} icon={CalendarCheck2} trend={errorMessage ? 'Aguardando Firebase' : 'Dados reais'} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
@@ -59,7 +59,7 @@ export function AdminDashboardPage() {
               ) : summary.upNext.length ? (
                 summary.upNext.map((item) => <p key={item.id}>{item.startTime} • {item.title}</p>)
               ) : (
-                <EmptyState title="Sem itens" description="Nenhum próximo item foi retornado pelo backend." compact />
+                <EmptyState title="Sem itens" description="Nenhum próximo item foi retornado pelas Functions." compact />
               )}
             </CardContent>
           </Card>

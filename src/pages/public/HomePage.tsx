@@ -28,7 +28,7 @@ export function HomePage() {
         ) : programsState.errorMessage ? (
           <EmptyState
             title="Não foi possível carregar os programas"
-            description={`${programsState.errorMessage} A página continuará disponível mesmo com o backend desligado.`}
+            description={`${programsState.errorMessage} A página continuará disponível mesmo com Firestore/Functions indisponíveis.`}
             tone="warning"
           />
         ) : programsState.data.length ? (
@@ -51,7 +51,7 @@ export function HomePage() {
         ) : presentersState.errorMessage ? (
           <EmptyState
             title="Não foi possível carregar os apresentadores"
-            description={`${presentersState.errorMessage} Verifique a disponibilidade do backend para ver os dados reais.`}
+            description={`${presentersState.errorMessage} Verifique a disponibilidade do Firebase para ver os dados reais.`}
             tone="warning"
           />
         ) : presentersState.data.length ? (
@@ -59,7 +59,7 @@ export function HomePage() {
             {presentersState.data.map((presenter) => <PresenterCard key={presenter.id} presenter={presenter} />)}
           </div>
         ) : (
-          <EmptyState title="Nenhum apresentador encontrado" description="Cadastre apresentadores no backend para preencher esta seção." />
+          <EmptyState title="Nenhum apresentador encontrado" description="Cadastre apresentadores no Firestore para preencher esta seção." />
         )}
       </section>
     </div>
