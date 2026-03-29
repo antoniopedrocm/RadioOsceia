@@ -50,7 +50,7 @@ Frontend por padrão: `http://localhost:5173`.
    ```bash
    cp .env.example .env
    ```
-4. Revise as variáveis principais (`PORT`, `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`).
+4. Revise as variáveis principais (`PORT`, `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`). No Prisma ORM v7, a URL do banco é lida em `backend/prisma.config.ts` (via `env("DATABASE_URL")`).
 5. Gere o cliente do Prisma:
    ```bash
    npx prisma generate
