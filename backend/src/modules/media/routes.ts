@@ -70,6 +70,7 @@ export async function mediaRoutes(app: FastifyInstance) {
 
   app.post('/media/youtube', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const body = youtubeSchema.parse(request.body);
+    app.log.info({ route: '/media/youtube', institutionId: body.institutionId, mediaType: body.mediaType, programId: body.programId }, 'media:create youtube request');
     const youtube = parseYouTubeUrl(body.youtubeUrl);
 
     const media = await app.prisma.media.create({
@@ -105,6 +106,7 @@ export async function mediaRoutes(app: FastifyInstance) {
     const programId = fields.programId?.value ? String(fields.programId.value) : null;
     const status = fields.status?.value ? mediaStatusSchema.parse(String(fields.status.value)) : 'ACTIVE';
     const notes = fields.notes?.value ? String(fields.notes.value) : null;
+    app.log.info({ route: '/media/local-upload', institutionId, mediaType, programId }, 'media:create local-upload request');
 
     if (!institutionId || !title || !Number.isFinite(durationSeconds)) {
       throw app.httpErrors.badRequest('institutionId, title e durationSeconds são obrigatórios');
@@ -148,6 +150,7 @@ export async function mediaRoutes(app: FastifyInstance) {
 
   app.post('/media/local-register', { preHandler: [authenticate, requireRole('EDITOR')] }, async (request) => {
     const body = localRegisterSchema.parse(request.body);
+    app.log.info({ route: '/media/local-register', institutionId: body.institutionId, mediaType: body.mediaType, programId: body.programId }, 'media:create local-register request');
     const fileName = path.basename(body.filePath);
 
     const media = await app.prisma.media.create({
