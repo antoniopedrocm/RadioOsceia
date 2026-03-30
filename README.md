@@ -59,10 +59,12 @@ UI dos emuladores: `http://localhost:4000`.
 
 ## Seed de desenvolvimento
 
-A forma **oficial** de seed é via Cloud Function callable `bootstrapSeedData`.
+Fluxos oficiais de seed:
 
-- Execute com cliente autenticado (por exemplo, pelo app em execução local) chamando a callable `bootstrapSeedData`.
-- Também é possível seguir o procedimento manual descrito abaixo quando necessário.
+- Cloud Function callable `bootstrapSeedData` (recomendado para automatizar a carga inicial).
+- Procedimento manual oficial no Firestore/Emulator UI (fallback).
+
+> Não existe fluxo de produção via endpoint HTTP local como `/bootstrap/seed` no frontend.
 
 ### Procedimento manual (fallback)
 
