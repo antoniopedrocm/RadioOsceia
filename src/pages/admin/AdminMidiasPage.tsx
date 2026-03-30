@@ -89,6 +89,12 @@ function getStatusLabel(status: MediaStatus) {
   return 'Inativo';
 }
 
+function debugLog(...args: Parameters<typeof console.debug>) {
+  if (import.meta.env.DEV) {
+    console.debug(...args);
+  }
+}
+
 export function AdminMidiasPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -119,7 +125,7 @@ export function AdminMidiasPage() {
   })), [mediaState.data]);
 
   const handleCreateMedia = async (payload: MediaCreatePayload) => {
-    console.debug('[AdminMidiasPage] createMedia:start', payload);
+    debugLog('[AdminMidiasPage] createMedia:start', payload);
 
     const notesWithStatus = [
       `[status:${payload.status}]`,
@@ -127,7 +133,7 @@ export function AdminMidiasPage() {
     ].filter(Boolean).join('\n');
 
     if (payload.source === 'YOUTUBE') {
-      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/youtube' });
+      debugLog('[AdminMidiasPage] createMedia:request', { endpoint: '/media/youtube' });
       await api.post('/media/youtube', {
         title: payload.title,
         mediaType: payload.mediaType,
@@ -145,7 +151,7 @@ export function AdminMidiasPage() {
     }
 
     if (payload.source === 'EXISTING_FILE') {
-      console.debug('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-register' });
+      debugLog('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-register' });
       await api.post('/media/local-register', {
         title: payload.title,
         mediaType: payload.mediaType,
@@ -158,7 +164,7 @@ export function AdminMidiasPage() {
       });
     }
 
-    console.debug('[AdminMidiasPage] createMedia:success', { title: payload.title });
+    debugLog('[AdminMidiasPage] createMedia:success', { title: payload.title });
     mediaState.reload();
     setFeedback(`Mídia "${payload.title}" cadastrada com sucesso.`);
     window.setTimeout(() => setFeedback(null), 4000);

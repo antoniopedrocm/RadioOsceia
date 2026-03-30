@@ -140,6 +140,12 @@ export function getStatusLabel(status: MediaStatus) {
   return 'Inativo';
 }
 
+function debugLog(...args: Parameters<typeof console.debug>) {
+  if (import.meta.env.DEV) {
+    console.debug(...args);
+  }
+}
+
 export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaCreateModalProps) {
   const [form, setForm] = useState<FormState>(INITIAL_STATE);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -198,11 +204,11 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    console.debug('[MediaCreateModal] submit:start', { source: form.source, title: form.title });
+    debugLog('[MediaCreateModal] submit:start', { source: form.source, title: form.title });
 
     const { nextErrors, durationSeconds } = validate();
     if (Object.keys(nextErrors).length > 0) {
-      console.debug('[MediaCreateModal] submit:validation_error', nextErrors);
+      debugLog('[MediaCreateModal] submit:validation_error', nextErrors);
       setErrors(nextErrors);
       return;
     }
@@ -247,11 +253,11 @@ export function MediaCreateModal({ isOpen, programs, onClose, onSubmit }: MediaC
 
     setIsSubmitting(true);
     setSubmitError(null);
-    console.debug('[MediaCreateModal] submit:payload', payload);
+    debugLog('[MediaCreateModal] submit:payload', payload);
 
     try {
       await onSubmit(payload);
-      console.debug('[MediaCreateModal] submit:success');
+      debugLog('[MediaCreateModal] submit:success');
       resetAndClose();
     } catch (error) {
       console.error('[MediaCreateModal] submit:error', error);
