@@ -57,7 +57,14 @@ npm run dev:emulators
 UI do frontend: `http://localhost:5173`.
 UI dos emuladores: `http://localhost:4000`.
 
-## Seed de desenvolvimento (manual rápido)
+## Seed de desenvolvimento
+
+A forma **oficial** de seed é via Cloud Function callable `bootstrapSeedData`.
+
+- Execute com cliente autenticado (por exemplo, pelo app em execução local) chamando a callable `bootstrapSeedData`.
+- Também é possível seguir o procedimento manual descrito abaixo quando necessário.
+
+### Procedimento manual (fallback)
 
 No painel do Firestore (ou Emulator UI), crie os documentos mínimos abaixo:
 
