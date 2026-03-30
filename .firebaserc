@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "radio-osceia-dev"
+    "default": "radio-osceia-dev",
+    "dev": "radio-osceia-dev",
+    "prod": "radioosceia"
   }
 }
