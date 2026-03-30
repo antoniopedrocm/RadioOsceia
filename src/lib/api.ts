@@ -238,9 +238,24 @@ async function getAdminPrograms() {
   const snapshot = await getDocs(query(collection(db, 'programs'), orderBy('title', 'asc')));
   return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
     const data = item.data();
+    const presenterName = typeof data.presenterName === 'string'
+      ? data.presenterName
+      : typeof data.hostName === 'string'
+        ? data.hostName
+        : null;
+    const categoryName = typeof data.categoryName === 'string'
+      ? data.categoryName
+      : typeof data.category === 'string'
+        ? data.category
+        : null;
+
     return {
       id: item.id,
-      title: String(data.title ?? 'Programa sem título')
+      title: String(data.title ?? 'Programa sem título'),
+      presenterName,
+      categoryName,
+      isActive: Boolean(data.isActive ?? true),
+      status: typeof data.status === 'string' ? String(data.status).toUpperCase() : null
     };
   });
 }
