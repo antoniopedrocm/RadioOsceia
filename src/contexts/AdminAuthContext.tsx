@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User as FirebaseUser } from 'firebase/auth';
+import { FirebaseError } from 'firebase/app';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
-import { auth, db } from '@/lib/firebase';
+import { auth, configureAuthPersistence, db } from '@/lib/firebase';
 
 interface AdminUser {
   id: string;
@@ -23,6 +24,23 @@ interface AdminAuthContextValue {
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
+
+function mapFirebaseAuthError(error: unknown): string {
+  if (!(error instanceof FirebaseError)) {
+    return 'Não foi possível entrar. Verifique suas credenciais.';
+  }
+
+  const errorCode = error.code.replace('auth/', '');
+  const messages: Record<string, string> = {
+    'invalid-credential': 'E-mail ou senha inválidos.',
+    'wrong-password': 'Senha incorreta.',
+    'user-not-found': 'Usuário não encontrado.',
+    'invalid-email': 'E-mail inválido.',
+    'too-many-requests': 'Muitas tentativas. Tente novamente em instantes.'
+  };
+
+  return messages[errorCode] ?? 'Não foi possível entrar. Verifique suas credenciais.';
+}
 
 async function upsertProfile(firebaseUser: FirebaseUser): Promise<AdminUser> {
   const userRef = doc(db, 'users', firebaseUser.uid);
@@ -83,13 +101,19 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       user,
       userEmail: user?.email ?? null,
       login: async (email: string, password: string, remember) => {
-        if (!email.trim() || !password.trim()) {
+        const normalizedEmail = email.trim();
+        if (!normalizedEmail || !password.trim()) {
           throw new Error('Preencha e-mail e senha para continuar.');
         }
 
-        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-        const profile = await upsertProfile(credential.user);
-        setUser(profile);
+        try {
+          await configureAuthPersistence(remember);
+          const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+          const profile = await upsertProfile(credential.user);
+          setUser(profile);
+        } catch (error) {
+          throw new Error(mapFirebaseAuthError(error));
+        }
       },
       logout: async () => {
         await signOut(auth);

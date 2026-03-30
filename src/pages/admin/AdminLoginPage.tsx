@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 
 export function AdminLoginPage() {
-  const [email, setEmail] = useState('admin@irmaoaureo.dev');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
   const { login } = useAdminAuth();
@@ -19,12 +19,18 @@ export function AdminLoginPage() {
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) {
+      setError('Preencha e-mail e senha para continuar.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await login(email, password, keepConnected);
+      await login(normalizedEmail, password, keepConnected);
       navigate('/admin/dashboard');
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : 'Falha no login');
+      setError(loginError instanceof Error ? loginError.message : 'Não foi possível entrar. Verifique suas credenciais.');
     } finally {
       setLoading(false);
     }
@@ -74,7 +80,11 @@ export function AdminLoginPage() {
               {loading ? 'Entrando...' : 'Entrar no painel'}
             </Button>
           </form>
-          <p className="mt-4 text-center text-xs text-slate-500">Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).</p>
+          {import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true' ? (
+            <p className="mt-4 text-center text-xs text-slate-500">
+              Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).
+            </p>
+          ) : null}
           <Link to="/" className="mt-4 block text-center text-sm font-medium text-blue-600 hover:underline">
             Voltar ao site público
           </Link>
