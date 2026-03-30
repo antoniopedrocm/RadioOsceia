@@ -87,3 +87,51 @@ A camada antiga HTTP (`localhost:3333/api/v1`) foi substituída por integração
 ## Legado
 
 O diretório `backend/` (Fastify/Prisma/PostgreSQL) foi mantido apenas como legado temporário e **não é mais necessário** para executar a aplicação migrada.
+
+## Deploy (separado por alvo)
+
+O `firebase.json` mantém `functions`, `hosting` e `firestore` no mesmo repositório, mas o deploy pode ser separado por alvo para evitar publicar Cloud Functions quando o projeto GCP ainda não tem permissões (billing/App Engine/roles).
+
+### Fluxo recomendado (frontend + firestore, sem Functions)
+
+```bash
+npm run deploy:web
+```
+
+Esse comando executa build do frontend e publica **somente** `hosting` + `firestore` (`--only hosting,firestore`).
+
+Também é possível publicar individualmente:
+
+```bash
+npm run deploy:hosting
+npm run deploy:firestore
+```
+
+### Deploy de Functions (quando a infraestrutura estiver pronta)
+
+```bash
+npm run deploy:functions
+```
+
+### Deploy completo (tudo)
+
+```bash
+npm run deploy:all
+```
+
+## Projetos Firebase (dev vs prod)
+
+O `.firebaserc` define aliases:
+
+- `default` / `dev` → `radio-osceia-dev`
+- `prod` → `radioosceia`
+
+Exemplos:
+
+```bash
+npm run deploy:web -- --project dev
+npm run deploy:web -- --project prod
+# ou: npm run deploy:web -- --project radioosceia
+```
+
+`.env.example` continua apontando para `radio-osceia-dev` (desenvolvimento). Para produção, use as chaves do projeto `radioosceia` no seu arquivo de ambiente de build/deploy.
