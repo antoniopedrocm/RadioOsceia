@@ -11,22 +11,37 @@ export function AdminLoginPage() {
   const [email, setEmail] = useState('admin@irmaoaureo.dev');
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
-  const { login } = useAdminAuth();
+  const { login, loginWithGoogle } = useAdminAuth();
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingEmail, setLoadingEmail] = useState(false);
+  const [loadingGoogle, setLoadingGoogle] = useState(false);
   const navigate = useNavigate();
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-    setLoading(true);
+    setLoadingEmail(true);
     try {
       await login(email, password, keepConnected);
       navigate('/admin/dashboard');
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'Falha no login');
     } finally {
-      setLoading(false);
+      setLoadingEmail(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError(null);
+    setLoadingGoogle(true);
+
+    try {
+      await loginWithGoogle(keepConnected);
+      navigate('/admin/dashboard');
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Falha no login com Google');
+    } finally {
+      setLoadingGoogle(false);
     }
   };
 
@@ -69,12 +84,25 @@ export function AdminLoginPage() {
               Manter conectado
             </label>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            <Button className="w-full gap-2 bg-blue-600 hover:bg-blue-700" type="submit" disabled={loading}>
+            <Button className="w-full gap-2 bg-blue-600 hover:bg-blue-700" type="submit" disabled={loadingEmail}>
               <Lock size={16} />
-              {loading ? 'Entrando...' : 'Entrar no painel'}
+              {loadingEmail ? 'Entrando...' : 'Entrar no painel'}
+            </Button>
+            <Button
+              className="w-full gap-2 border bg-white text-slate-700 hover:bg-slate-50"
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={loadingGoogle}
+            >
+              <img src="/google-icon.svg" alt="" className="h-4 w-4" />
+              {loadingGoogle ? 'Entrando...' : 'Entrar com Google'}
             </Button>
           </form>
-          <p className="mt-4 text-center text-xs text-slate-500">Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).</p>
+          {import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true' && (
+            <p className="mt-4 text-center text-xs text-slate-500">
+              Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).
+            </p>
+          )}
           <Link to="/" className="mt-4 block text-center text-sm font-medium text-blue-600 hover:underline">
             Voltar ao site público
           </Link>
