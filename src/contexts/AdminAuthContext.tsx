@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
-import { auth, db } from '@/lib/firebase';
+import { auth, configureAuthPersistence, db } from '@/lib/firebase';
 
 interface AdminUser {
   id: string;
@@ -87,9 +87,29 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           throw new Error('Preencha e-mail e senha para continuar.');
         }
 
-        const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-        const profile = await upsertProfile(credential.user);
-        setUser(profile);
+        await configureAuthPersistence(remember);
+
+        try {
+          const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+          const profile = await upsertProfile(credential.user);
+          setUser(profile);
+        } catch (error) {
+          const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : null;
+
+          if (code === 'auth/user-not-found') {
+            throw new Error('Usuário não encontrado. Verifique o e-mail informado.');
+          }
+
+          if (code === 'auth/wrong-password') {
+            throw new Error('Senha inválida. Tente novamente.');
+          }
+
+          if (code === 'auth/too-many-requests') {
+            throw new Error('Muitas tentativas de login. Tente novamente em alguns minutos.');
+          }
+
+          throw new Error('Não foi possível fazer login agora. Tente novamente.');
+        }
       },
       logout: async () => {
         await signOut(auth);
