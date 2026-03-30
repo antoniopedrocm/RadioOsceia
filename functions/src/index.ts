@@ -8,7 +8,7 @@ initializeApp();
 
 const db = getFirestore();
 
-function requireAuth(auth: { uid: string } | null) {
+function requireAuth(auth: { uid: string } | null | undefined) {
   if (!auth?.uid) {
     throw new HttpsError('unauthenticated', 'Usuário não autenticado.');
   }
