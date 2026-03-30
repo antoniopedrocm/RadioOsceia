@@ -1,5 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User as FirebaseUser } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  type User as FirebaseUser
+} from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
 import { auth, configureAuthPersistence, db } from '@/lib/firebase';
@@ -19,6 +26,7 @@ interface AdminAuthContextValue {
   userEmail: string | null;
   user: AdminUser | null;
   login: (email: string, password: string, keepConnected: boolean) => Promise<void>;
+  loginWithGoogle: (remember: boolean) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -109,6 +117,32 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           }
 
           throw new Error('Não foi possível fazer login agora. Tente novamente.');
+        }
+      },
+      loginWithGoogle: async (remember) => {
+        await configureAuthPersistence(remember);
+
+        try {
+          const provider = new GoogleAuthProvider();
+          const { user: firebaseUser } = await signInWithPopup(auth, provider);
+          const profile = await upsertProfile(firebaseUser);
+          setUser(profile);
+        } catch (error) {
+          const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : null;
+
+          if (code === 'auth/popup-closed-by-user') {
+            throw new Error('Login com Google cancelado. Não feche a janela de autenticação e tente novamente.');
+          }
+
+          if (code === 'auth/account-exists-with-different-credential') {
+            throw new Error('Esta conta já existe com outro método de login. Use o método original para entrar.');
+          }
+
+          if (code === 'auth/operation-not-allowed') {
+            throw new Error('Login com Google não está habilitado no momento.');
+          }
+
+          throw new Error('Não foi possível fazer login com Google. Tente novamente.');
         }
       },
       logout: async () => {
