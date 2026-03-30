@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "dev:emulators": "firebase emulators:start",
     "dev:functions": "npm --prefix functions run build:watch",
-    "seed:firebase": "npm --prefix functions run seed:emulator",
+    "seed:firebase": "node -e \"console.log('Seed oficial: execute a Cloud Function callable bootstrapSeedData (ou siga o procedimento no README).')\"",
     "deploy:hosting": "firebase deploy --only hosting",
     "deploy:firestore": "firebase deploy --only firestore",
     "deploy:web": "npm run build && firebase deploy --only hosting,firestore",
