@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
-import { auth, configureAuthPersistence, db } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 
 interface AdminUser {
   id: string;
@@ -87,7 +87,6 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           throw new Error('Preencha e-mail e senha para continuar.');
         }
 
-        await configureAuthPersistence(remember);
         const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
         const profile = await upsertProfile(credential.user);
         setUser(profile);
