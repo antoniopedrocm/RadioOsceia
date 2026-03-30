@@ -77,16 +77,12 @@ No painel do Firestore (ou Emulator UI), crie os documentos mínimos abaixo:
 
 ## Integração frontend
 
-A camada antiga HTTP (`localhost:3333/api/v1`) foi substituída por integração Firebase:
+A aplicação utiliza integração Firebase em todas as operações:
 
 - Leitura/escrita direta no Firestore para entidades simples.
 - Criação de mídia YouTube salva direto em `media` com validação e parse da URL no cliente.
 - Cálculo de `now-playing`, `up-next`, timeline e resumo de dashboard feito em runtime no cliente usando `scheduleBlocks` + `playbackSequences`.
 - Auth admin via Firebase Authentication com perfil/autorização em `users/{uid}`.
-
-## Legado
-
-O diretório `backend/` (Fastify/Prisma/PostgreSQL) foi mantido apenas como legado temporário e **não é mais necessário** para executar a aplicação migrada.
 
 ## Deploy (separado por alvo)
 
