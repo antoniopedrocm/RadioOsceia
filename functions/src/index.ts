@@ -3,6 +3,15 @@ import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { parseYoutubeUrl } from './youtube.js';
+import {
+  buildNowPlayingPayload as buildSharedNowPlayingPayload,
+  getDashboardSummary as getSharedDashboardSummary,
+  resolveTimeline as resolveSharedTimeline,
+  type DashboardDataAdapter,
+  type TimelineMedia,
+  type TimelineScheduleBlock,
+  type TimelineSequenceItem
+} from '../../src/lib/timeline.js';
 
 initializeApp();
 
@@ -127,85 +136,83 @@ export const saveScheduleBlock = onCall(async (request) => {
   return { id: blockRef.id };
 });
 
-async function resolveTimeline(weekday: number) {
+async function loadTimelineBlocks(weekday: number): Promise<TimelineScheduleBlock[]> {
   const blocksSnapshot = await db.collection('scheduleBlocks')
     .where('weekday', '==', weekday)
     .where('isActive', '==', true)
     .orderBy('startTime', 'asc')
     .get();
 
-  const blocks: Array<{ id: string; title: string; startTime: string; endTime: string | null; sequenceId: string; timeline: Array<Record<string, unknown>> }> = [];
-
-  for (const blockDoc of blocksSnapshot.docs) {
+  return blocksSnapshot.docs.map((blockDoc) => {
     const blockData = blockDoc.data();
-    const itemsSnapshot = await db.collection('playbackSequences').doc(blockData.sequenceId).collection('items').orderBy('orderIndex', 'asc').get();
-
-    const timeline = [];
-    for (const itemDoc of itemsSnapshot.docs) {
-      const item = itemDoc.data();
-      const mediaDoc = await db.collection('media').doc(item.mediaId).get();
-      timeline.push({
-        itemId: itemDoc.id,
-        mediaId: item.mediaId,
-        title: mediaDoc.data()?.title ?? 'Mídia sem título',
-        sourceType: mediaDoc.data()?.sourceType ?? 'YOUTUBE',
-        startAt: item.fixedStartTime ?? blockData.startTime
-      });
-    }
-
-    blocks.push({
+    return {
       id: blockDoc.id,
-      title: blockData.title,
-      startTime: blockData.startTime,
-      endTime: blockData.endTime ?? null,
-      sequenceId: blockData.sequenceId,
-      timeline
-    });
-  }
-
-  return blocks;
+      title: String(blockData.title ?? 'Bloco sem título'),
+      weekday: blockData.weekday,
+      startTime: String(blockData.startTime ?? '00:00'),
+      endTime: typeof blockData.endTime === 'string' ? blockData.endTime : null,
+      sequenceId: String(blockData.sequenceId ?? ''),
+      programId: typeof blockData.programId === 'string' ? blockData.programId : null,
+      isActive: Boolean(blockData.isActive ?? true)
+    } satisfies TimelineScheduleBlock;
+  }).filter((block) => block.sequenceId);
 }
 
+async function loadSequenceItems(sequenceId: string): Promise<TimelineSequenceItem[]> {
+  const itemsSnapshot = await db.collection('playbackSequences').doc(sequenceId).collection('items').orderBy('orderIndex', 'asc').get();
 
-async function buildNowPlayingPayload() {
-  const now = new Date();
-  const weekday = now.getDay();
-  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-  const blocks = await resolveTimeline(weekday);
-  const currentBlock = blocks.find((block) => block.startTime <= hhmm && (!block.endTime || block.endTime >= hhmm)) ?? null;
-
-  if (!currentBlock || currentBlock.timeline.length === 0) {
+  return itemsSnapshot.docs.map((itemDoc, index) => {
+    const item = itemDoc.data();
     return {
-      institution: { id: 'irmao-aureo', slug: 'irmao-aureo', name: 'Irmão Áureo' },
-      nowPlaying: null,
-      upNext: []
-    };
-  }
+      id: itemDoc.id,
+      mediaId: String(item.mediaId ?? ''),
+      orderIndex: Number(item.orderIndex ?? index + 1),
+      startMode: typeof item.startMode === 'string' ? item.startMode : 'IMMEDIATE',
+      fixedStartTime: typeof item.fixedStartTime === 'string' ? item.fixedStartTime : undefined,
+      relativeOffsetSeconds: Number(item.relativeOffsetSeconds ?? 0),
+      startAfterPrevious: Boolean(item.startAfterPrevious ?? true)
+    } satisfies TimelineSequenceItem;
+  }).filter((item) => item.mediaId);
+}
 
-  const firstItem = currentBlock.timeline[0] as { mediaId: string; title: string; sourceType: string };
-  const media = await db.collection('media').doc(firstItem.mediaId).get();
+async function loadMedia(mediaId: string): Promise<TimelineMedia | null> {
+  const mediaDoc = await db.collection('media').doc(mediaId).get();
+  if (!mediaDoc.exists) return null;
+  const mediaData = mediaDoc.data() ?? {};
 
   return {
-    institution: { id: 'irmao-aureo', slug: 'irmao-aureo', name: 'Irmão Áureo' },
-    nowPlaying: {
-      source: currentBlock.title,
-      title: firstItem.title,
-      media: {
-        id: firstItem.mediaId,
-        title: firstItem.title,
-        sourceType: firstItem.sourceType,
-        mediaType: String(media.data()?.mediaType ?? 'VIDEO'),
-        youtubeVideoId: media.data()?.youtubeVideoId ?? null,
-        publicUrl: media.data()?.youtubeUrl ?? null
-      }
-    },
-    upNext: currentBlock.timeline.slice(1, 6).map((item) => ({
-      id: String((item as { itemId: string }).itemId),
-      title: String((item as { title: string }).title),
-      startTime: String((item as { startAt: string }).startAt)
-    }))
+    id: mediaDoc.id,
+    title: String(mediaData.title ?? 'Mídia sem título'),
+    mediaType: String(mediaData.mediaType ?? 'VIDEO'),
+    sourceType: typeof mediaData.sourceType === 'string' ? mediaData.sourceType : 'YOUTUBE',
+    youtubeUrl: typeof mediaData.youtubeUrl === 'string' ? mediaData.youtubeUrl : undefined,
+    youtubeVideoId: typeof mediaData.youtubeVideoId === 'string' ? mediaData.youtubeVideoId : undefined,
+    embedUrl: typeof mediaData.embedUrl === 'string' ? mediaData.embedUrl : undefined,
+    thumbnailUrl: typeof mediaData.thumbnailUrl === 'string' ? mediaData.thumbnailUrl : undefined,
+    durationSeconds: Number(mediaData.durationSeconds ?? 0)
   };
+}
+
+const timelineAdapter: DashboardDataAdapter = {
+  loadTimelineBlocks,
+  loadSequenceItems,
+  loadMedia,
+  async countPrograms() {
+    const snapshot = await db.collection('programs').count().get();
+    return snapshot.data().count;
+  },
+  async countMedia() {
+    const snapshot = await db.collection('media').count().get();
+    return snapshot.data().count;
+  }
+};
+
+async function resolveTimeline(weekday: number) {
+  return resolveSharedTimeline(weekday, timelineAdapter);
+}
+
+async function buildNowPlayingPayload() {
+  return buildSharedNowPlayingPayload(timelineAdapter);
 }
 
 export const getTimeline = onCall(async (request) => {
@@ -221,24 +228,7 @@ export const getUpNext = onCall(async () => {
   return { upNext: data.upNext ?? [] };
 });
 
-export const getDashboardSummary = onCall(async () => {
-  const [programs, media, scheduleBlocks, nowPlaying] = await Promise.all([
-    db.collection('programs').count().get(),
-    db.collection('media').count().get(),
-    db.collection('scheduleBlocks').where('weekday', '==', new Date().getDay()).where('isActive', '==', true).count().get(),
-buildNowPlayingPayload()
-  ]);
-
-  const now = nowPlaying as { nowPlaying: { title: string } | null; upNext: Array<{ id: string; title: string; startTime: string }> };
-
-  return {
-    programs: programs.data().count,
-    media: media.data().count,
-    scheduledToday: scheduleBlocks.data().count,
-    nowPlaying: now.nowPlaying,
-    upNext: now.upNext ?? []
-  };
-});
+export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(timelineAdapter));
 
 export const bootstrapSeedData = onCall(async () => {
   const auth = getAuth();
