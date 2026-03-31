@@ -46,7 +46,7 @@ const FIREBASE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID ?? 'unknown
 
 function extractFirebaseErrorCode(error: unknown): string | null {
   if (typeof error === 'object' && error && 'code' in error) {
-    return String(error.code).replace(/^firestore\//, '');
+    return String(error.code).replace(/^(firestore|auth)\//, '');
   }
 
   return null;
@@ -82,6 +82,46 @@ function mapAdminAuthIssue(code: string | null): AdminAuthIssue {
     category: 'unknown',
     message: 'Não foi possível validar seu perfil administrativo agora. Tente novamente em alguns instantes.'
   };
+}
+
+function mapEmailLoginError(code: string | null): string {
+  if (code === 'user-not-found') {
+    return 'Usuário não encontrado. Verifique o e-mail informado.';
+  }
+
+  if (code === 'wrong-password' || code === 'invalid-credential') {
+    return 'E-mail ou senha inválidos. Revise os dados e tente novamente.';
+  }
+
+  if (code === 'invalid-email') {
+    return 'E-mail inválido. Verifique o formato informado.';
+  }
+
+  if (code === 'too-many-requests') {
+    return 'Muitas tentativas de login. Tente novamente em alguns minutos.';
+  }
+
+  return 'Não foi possível fazer login agora. Tente novamente.';
+}
+
+function mapGoogleLoginError(code: string | null): string {
+  if (code === 'popup-closed-by-user') {
+    return 'Login com Google cancelado. Não feche a janela de autenticação e tente novamente.';
+  }
+
+  if (code === 'popup-blocked') {
+    return 'O navegador bloqueou a janela de login do Google. Libere pop-ups para este site e tente novamente.';
+  }
+
+  if (code === 'account-exists-with-different-credential') {
+    return 'Esta conta já existe com outro método de login. Use o método original para entrar.';
+  }
+
+  if (code === 'operation-not-allowed') {
+    return 'Login com Google não está habilitado no momento.';
+  }
+
+  return 'Não foi possível fazer login com Google. Tente novamente.';
 }
 
 async function upsertProfile(firebaseUser: FirebaseUser): Promise<AdminUser> {
@@ -195,21 +235,15 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           const profile = await upsertProfile(credential.user);
           setUser(profile);
         } catch (error) {
-          const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : null;
+          const code = extractFirebaseErrorCode(error);
+          const issue = mapAdminAuthIssue(code);
 
-          if (code === 'auth/user-not-found') {
-            throw new Error('Usuário não encontrado. Verifique o e-mail informado.');
+          if (code === 'permission-denied') {
+            setAuthIssue(issue);
+            throw new Error(issue.message);
           }
 
-          if (code === 'auth/wrong-password') {
-            throw new Error('Senha inválida. Tente novamente.');
-          }
-
-          if (code === 'auth/too-many-requests') {
-            throw new Error('Muitas tentativas de login. Tente novamente em alguns minutos.');
-          }
-
-          throw new Error('Não foi possível fazer login agora. Tente novamente.');
+          throw new Error(mapEmailLoginError(code));
         }
       },
       loginWithGoogle: async (remember) => {
@@ -222,21 +256,15 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           const profile = await upsertProfile(firebaseUser);
           setUser(profile);
         } catch (error) {
-          const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : null;
+          const code = extractFirebaseErrorCode(error);
+          const issue = mapAdminAuthIssue(code);
 
-          if (code === 'auth/popup-closed-by-user') {
-            throw new Error('Login com Google cancelado. Não feche a janela de autenticação e tente novamente.');
+          if (code === 'permission-denied') {
+            setAuthIssue(issue);
+            throw new Error(issue.message);
           }
 
-          if (code === 'auth/account-exists-with-different-credential') {
-            throw new Error('Esta conta já existe com outro método de login. Use o método original para entrar.');
-          }
-
-          if (code === 'auth/operation-not-allowed') {
-            throw new Error('Login com Google não está habilitado no momento.');
-          }
-
-          throw new Error('Não foi possível fazer login com Google. Tente novamente.');
+          throw new Error(mapGoogleLoginError(code));
         }
       },
       logout: async () => {
