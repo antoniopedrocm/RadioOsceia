@@ -11,7 +11,7 @@ export function AdminLoginPage() {
   const [email, setEmail] = useState('admin@irmaoaureo.dev');
   const [password, setPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
-  const { login, loginWithGoogle } = useAdminAuth();
+  const { login, loginWithGoogle, authIssue, clearAuthIssue } = useAdminAuth();
   const [error, setError] = useState<string | null>(null);
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
@@ -20,6 +20,7 @@ export function AdminLoginPage() {
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    clearAuthIssue();
     setLoadingEmail(true);
     try {
       await login(email, password, keepConnected);
@@ -33,6 +34,7 @@ export function AdminLoginPage() {
 
   const handleGoogleLogin = async () => {
     setError(null);
+    clearAuthIssue();
     setLoadingGoogle(true);
 
     try {
@@ -84,6 +86,12 @@ export function AdminLoginPage() {
               Manter conectado
             </label>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {authIssue ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <p className="font-medium">Orientação para acesso administrativo</p>
+                <p>{authIssue.message}</p>
+              </div>
+            ) : null}
             <Button className="w-full gap-2 bg-blue-600 hover:bg-blue-700" type="submit" disabled={loadingEmail}>
               <Lock size={16} />
               {loadingEmail ? 'Entrando...' : 'Entrar no painel'}
