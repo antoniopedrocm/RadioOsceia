@@ -19,6 +19,14 @@ const firebaseConfig: FirebaseOptions = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
+function logFirebaseProjectContext(config: FirebaseOptions) {
+  console.info('[firebase] Contexto carregado no frontend', {
+    projectId: config.projectId,
+    authDomain: config.authDomain,
+    useEmulators: import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true'
+  });
+}
+
 function validateFirebaseConfig(config: FirebaseOptions) {
   const requiredEntries: Array<[keyof FirebaseOptions, string | undefined]> = [
     ['apiKey', config.apiKey],
@@ -44,6 +52,7 @@ let dbInstance: Firestore | null = null;
 
 try {
   validateFirebaseConfig(firebaseConfig);
+  logFirebaseProjectContext(firebaseConfig);
   const app = initializeApp(firebaseConfig);
   authInstance = getAuth(app);
   dbInstance = getFirestore(app);

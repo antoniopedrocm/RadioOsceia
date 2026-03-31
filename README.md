@@ -140,3 +140,24 @@ npm run deploy:web -- --project prod
 ```
 
 `.env.example` continua apontando para `radio-osceia-dev` (desenvolvimento). Para produção, use as chaves do projeto `radioosceia` no seu arquivo de ambiente de build/deploy.
+
+## Diagnóstico rápido de `PERMISSION_DENIED` em `users/{uid}`
+
+1. **Confirmar o `projectId` efetivo do frontend**  
+   Abra o DevTools do navegador e valide o log:
+   - `[firebase] Contexto carregado no frontend` com `projectId`.
+   - Esse valor vem de `VITE_FIREBASE_PROJECT_ID`.
+2. **Comparar com o projeto de deploy das regras**  
+   Confira o alias/projeto ativo antes do deploy:
+   ```bash
+   firebase use
+   ```
+3. **Publicar regras no alias correto (`dev` ou `prod`)**  
+   ```bash
+   npm run deploy:firestore -- --project dev
+   npm run deploy:firestore -- --project prod
+   ```
+4. **Garantir que o usuário exista no Authentication do mesmo projeto**  
+   O usuário autenticado precisa estar no Firebase Authentication do projeto indicado por `projectId`.
+5. **Revalidar login + escrita em `users/{uid}`**  
+   Após alinhar projeto e regras, faça logout/login e teste novamente a escrita do perfil.
