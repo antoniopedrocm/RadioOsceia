@@ -5,6 +5,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
     function isAdminOrOperator() {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'operador'];
     }
@@ -15,8 +19,16 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (request.auth.uid == uid || isAdminOrOperator());
+      allow read: if isOwner(uid) || isAdminOrOperator();
+      allow create: if isOwner(uid)
+        && request.resource.data.id == uid
+        && request.resource.data.role == 'operador';
+      allow update: if (isOwner(uid)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.institution == resource.data.institution)
+        || isAdminOrOperator();
+      allow delete: if isAdminOrOperator();
     }
 
     match /programs/{docId} {
