@@ -9,6 +9,7 @@ import {
   type Auth
 } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions, type Functions } from 'firebase/functions';
 
 const firebaseConfig: FirebaseOptions = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -49,6 +50,7 @@ function validateFirebaseConfig(config: FirebaseOptions) {
 let firebaseInitializationError: Error | null = null;
 let authInstance: Auth | null = null;
 let dbInstance: Firestore | null = null;
+let functionsInstance: Functions | null = null;
 
 try {
   validateFirebaseConfig(firebaseConfig);
@@ -56,6 +58,7 @@ try {
   const app = initializeApp(firebaseConfig);
   authInstance = getAuth(app);
   dbInstance = getFirestore(app);
+  functionsInstance = getFunctions(app);
 } catch (error) {
   const details = error instanceof Error ? error.message : String(error);
   firebaseInitializationError = new Error(
@@ -68,6 +71,7 @@ export { firebaseInitializationError };
 
 export const auth = authInstance as Auth;
 export const db = dbInstance as Firestore;
+export const functions = functionsInstance as Functions;
 
 let emulatorsConnected = false;
 
@@ -78,6 +82,7 @@ export function connectFirebaseEmulators() {
 
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
 
   emulatorsConnected = true;
 }

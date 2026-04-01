@@ -13,6 +13,7 @@ export function AdminLayout() {
         <AdminHeader
           userEmail={userEmail}
           userName={user?.name ?? 'Administrador'}
+          authSource={user?.authSource}
         />
         <main className="p-6">
           <Outlet />

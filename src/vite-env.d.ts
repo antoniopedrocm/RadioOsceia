@@ -8,6 +8,9 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_MESSAGING_SENDER_ID: string;
   readonly VITE_FIREBASE_APP_ID: string;
   readonly VITE_USE_FIREBASE_EMULATORS?: 'true' | 'false';
+  readonly VITE_LOCAL_ADMIN_ENABLED?: 'true' | 'false';
+  readonly VITE_LOCAL_ADMIN_USERNAME?: string;
+  readonly VITE_LOCAL_ADMIN_PASSWORD_HASH?: string;
 }
 
 interface ImportMeta {

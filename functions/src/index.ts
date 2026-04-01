@@ -16,6 +16,8 @@ import {
 initializeApp();
 
 const db = getFirestore();
+type AdminRole = 'admin' | 'operador';
+type AdminStatus = 'ativo' | 'inativo';
 
 function requireAuth(auth: { uid: string } | null | undefined) {
   if (!auth?.uid) {
@@ -31,6 +33,57 @@ async function requireAdminOrOperator(uid: string) {
   if (!['admin', 'operador'].includes(role)) {
     throw new HttpsError('permission-denied', 'Perfil sem permissão para esta operação.');
   }
+}
+
+async function requireAdmin(uid: string) {
+  const userDoc = await db.collection('users').doc(uid).get();
+  const role = String(userDoc.data()?.role ?? '');
+  if (role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Somente administradores podem gerenciar usuários.');
+  }
+}
+
+function normalizeAdminRole(role: unknown): AdminRole | null {
+  return role === 'admin' || role === 'operador' ? role : null;
+}
+
+function normalizeAdminStatus(status: unknown): AdminStatus {
+  return status === 'inativo' ? 'inativo' : 'ativo';
+}
+
+function getUserProviderLabel(providerData: Array<{ providerId?: string }>) {
+  if (!providerData.length) return 'password';
+  if (providerData.some((provider) => provider.providerId === 'google.com')) return 'google';
+  if (providerData.some((provider) => provider.providerId === 'password')) return 'password';
+  return providerData[0]?.providerId ?? 'desconhecido';
+}
+
+function toAdminUserViewModel(params: {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: AdminRole;
+  status: AdminStatus;
+  disabled: boolean;
+  provider: string;
+  creationTime?: string | null;
+  lastSignInTime?: string | null;
+  institution?: string | null;
+}) {
+  return {
+    id: params.uid,
+    uid: params.uid,
+    nome: params.displayName,
+    email: params.email,
+    perfil: params.role,
+    status: params.status,
+    dataCriacao: params.creationTime ?? '',
+    ultimoAcesso: params.lastSignInTime ?? '',
+    provider: params.provider,
+    authSource: 'firebase',
+    institution: params.institution ?? null,
+    disabled: params.disabled
+  };
 }
 
 export const createYoutubeMedia = onCall(async (request) => {
@@ -229,6 +282,261 @@ export const getUpNext = onCall(async () => {
 });
 
 export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(timelineAdapter));
+
+export const listAdminUsers = onCall(async (request) => {
+  const uid = requireAuth(request.auth);
+  await requireAdminOrOperator(uid);
+
+  const auth = getAuth();
+  const adminProfilesSnapshot = await db.collection('users').where('role', 'in', ['admin', 'operador']).get();
+  const profileByUid = new Map<string, Record<string, unknown>>(adminProfilesSnapshot.docs.map((docItem) => [docItem.id, docItem.data() as Record<string, unknown>]));
+
+  let nextPageToken: string | undefined = undefined;
+  const users: Array<Record<string, unknown>> = [];
+
+  do {
+    const result = await auth.listUsers(1000, nextPageToken);
+    result.users.forEach((authUser) => {
+      const profile = profileByUid.get(authUser.uid);
+      const role = normalizeAdminRole(profile?.role);
+      if (!role) return;
+
+      const status = normalizeAdminStatus(profile?.status ?? (authUser.disabled ? 'inativo' : 'ativo'));
+      const viewModel = toAdminUserViewModel({
+        uid: authUser.uid,
+        email: authUser.email ?? String(profile?.email ?? ''),
+        displayName: authUser.displayName ?? String(profile?.name ?? authUser.email?.split('@')[0] ?? 'Usuário'),
+        role,
+        status,
+        disabled: authUser.disabled,
+        provider: getUserProviderLabel(authUser.providerData),
+        creationTime: authUser.metadata.creationTime ?? null,
+        lastSignInTime: authUser.metadata.lastSignInTime ?? null,
+        institution: typeof profile?.institution === 'string' ? profile.institution : null
+      });
+
+      users.push(viewModel);
+    });
+
+    nextPageToken = result.pageToken;
+  } while (nextPageToken);
+
+  if (process.env.LOCAL_ADMIN_ENABLED === 'true') {
+    users.unshift({
+      id: 'local-breakglass-administrador',
+      uid: 'local-breakglass-administrador',
+      nome: 'Administrador',
+      email: process.env.LOCAL_ADMIN_USERNAME ?? 'Administrador',
+      perfil: 'admin',
+      status: 'ativo',
+      dataCriacao: '',
+      ultimoAcesso: '',
+      provider: 'local',
+      authSource: 'local-breakglass',
+      institution: null,
+      disabled: false
+    });
+  }
+
+  users.sort((a, b) => String(b.dataCriacao ?? '').localeCompare(String(a.dataCriacao ?? '')));
+
+  return { ok: true, data: { users } };
+});
+
+export const createAdminUser = onCall(async (request) => {
+  const requesterUid = requireAuth(request.auth);
+  await requireAdmin(requesterUid);
+
+  const data = request.data as { nome?: string; email?: string; senha?: string; perfil?: AdminRole; status?: AdminStatus; institution?: string };
+  const role = normalizeAdminRole(data.perfil);
+  const status = normalizeAdminStatus(data.status);
+
+  if (!data.nome?.trim() || !data.email?.trim() || !data.senha?.trim() || !role) {
+    throw new HttpsError('invalid-argument', 'Dados inválidos. Informe nome, e-mail, senha e perfil administrativo.');
+  }
+
+  const auth = getAuth();
+  const createdUser = await auth.createUser({
+    email: data.email.trim().toLowerCase(),
+    password: data.senha,
+    displayName: data.nome.trim(),
+    disabled: status === 'inativo'
+  });
+
+  await db.collection('users').doc(createdUser.uid).set({
+    id: createdUser.uid,
+    name: data.nome.trim(),
+    email: data.email.trim().toLowerCase(),
+    role,
+    status,
+    institution: data.institution ?? 'Irmão Áureo',
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: requesterUid
+  }, { merge: true });
+
+  return {
+    ok: true,
+    data: {
+      user: toAdminUserViewModel({
+        uid: createdUser.uid,
+        email: createdUser.email ?? data.email.trim().toLowerCase(),
+        displayName: createdUser.displayName ?? data.nome.trim(),
+        role,
+        status,
+        disabled: createdUser.disabled,
+        provider: 'password',
+        creationTime: createdUser.metadata.creationTime ?? null,
+        lastSignInTime: createdUser.metadata.lastSignInTime ?? null,
+        institution: data.institution ?? 'Irmão Áureo'
+      })
+    }
+  };
+});
+
+export const updateAdminUser = onCall(async (request) => {
+  const requesterUid = requireAuth(request.auth);
+  await requireAdmin(requesterUid);
+
+  const data = request.data as { uid?: string; nome?: string; perfil?: AdminRole; status?: AdminStatus; senha?: string; institution?: string };
+  if (!data.uid?.trim()) {
+    throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
+  }
+
+  const role = normalizeAdminRole(data.perfil);
+  const status = normalizeAdminStatus(data.status);
+  if (!data.nome?.trim() || !role) {
+    throw new HttpsError('invalid-argument', 'Nome e perfil administrativo válidos são obrigatórios.');
+  }
+
+  const auth = getAuth();
+  const targetUser = await auth.getUser(data.uid.trim());
+  await auth.updateUser(data.uid.trim(), {
+    displayName: data.nome.trim(),
+    disabled: status === 'inativo',
+    ...(data.senha?.trim() ? { password: data.senha } : {})
+  });
+
+  await db.collection('users').doc(data.uid.trim()).set({
+    id: data.uid.trim(),
+    name: data.nome.trim(),
+    email: targetUser.email ?? '',
+    role,
+    status,
+    institution: data.institution ?? 'Irmão Áureo',
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: requesterUid
+  }, { merge: true });
+
+  const updated = await auth.getUser(data.uid.trim());
+  return {
+    ok: true,
+    data: {
+      user: toAdminUserViewModel({
+        uid: updated.uid,
+        email: updated.email ?? '',
+        displayName: updated.displayName ?? data.nome.trim(),
+        role,
+        status,
+        disabled: updated.disabled,
+        provider: getUserProviderLabel(updated.providerData),
+        creationTime: updated.metadata.creationTime ?? null,
+        lastSignInTime: updated.metadata.lastSignInTime ?? null,
+        institution: data.institution ?? 'Irmão Áureo'
+      })
+    }
+  };
+});
+
+export const toggleAdminUserStatus = onCall(async (request) => {
+  const requesterUid = requireAuth(request.auth);
+  await requireAdmin(requesterUid);
+
+  const data = request.data as { uid?: string; status?: AdminStatus };
+  if (!data.uid?.trim()) {
+    throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
+  }
+
+  const status = normalizeAdminStatus(data.status);
+  const targetRef = db.collection('users').doc(data.uid.trim());
+  const targetSnapshot = await targetRef.get();
+  const targetRole = normalizeAdminRole(targetSnapshot.data()?.role);
+
+  if (!targetRole) {
+    throw new HttpsError('failed-precondition', 'Usuário alvo não possui perfil administrativo válido.');
+  }
+
+  if (targetRole === 'admin' && status === 'inativo') {
+    const activeAdminSnapshot = await db.collection('users').where('role', '==', 'admin').where('status', '==', 'ativo').get();
+    if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== data.uid).length === 0) {
+      throw new HttpsError('failed-precondition', 'Não é permitido desativar o último admin ativo.');
+    }
+  }
+
+  const auth = getAuth();
+  await auth.updateUser(data.uid.trim(), { disabled: status === 'inativo' });
+  await targetRef.set({ status, updatedAt: FieldValue.serverTimestamp(), updatedBy: requesterUid }, { merge: true });
+
+  const updatedAuthUser = await auth.getUser(data.uid.trim());
+  return {
+    ok: true,
+    data: {
+      user: toAdminUserViewModel({
+        uid: updatedAuthUser.uid,
+        email: updatedAuthUser.email ?? String(targetSnapshot.data()?.email ?? ''),
+        displayName: updatedAuthUser.displayName ?? String(targetSnapshot.data()?.name ?? 'Usuário'),
+        role: targetRole,
+        status,
+        disabled: updatedAuthUser.disabled,
+        provider: getUserProviderLabel(updatedAuthUser.providerData),
+        creationTime: updatedAuthUser.metadata.creationTime ?? null,
+        lastSignInTime: updatedAuthUser.metadata.lastSignInTime ?? null,
+        institution: typeof targetSnapshot.data()?.institution === 'string' ? targetSnapshot.data()?.institution : null
+      })
+    }
+  };
+});
+
+export const deleteAdminUser = onCall(async (request) => {
+  const requesterUid = requireAuth(request.auth);
+  await requireAdmin(requesterUid);
+
+  const data = request.data as { uid?: string };
+  if (!data.uid?.trim()) {
+    throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
+  }
+
+  if (data.uid === requesterUid) {
+    throw new HttpsError('failed-precondition', 'Você não pode excluir a própria conta.');
+  }
+
+  const targetRef = db.collection('users').doc(data.uid.trim());
+  const targetSnapshot = await targetRef.get();
+  const targetRole = normalizeAdminRole(targetSnapshot.data()?.role);
+
+  if (!targetRole) {
+    throw new HttpsError('failed-precondition', 'Usuário alvo não possui perfil administrativo válido.');
+  }
+
+  if (targetRole === 'admin') {
+    const activeAdminSnapshot = await db.collection('users').where('role', '==', 'admin').where('status', '==', 'ativo').get();
+    if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== data.uid).length === 0) {
+      throw new HttpsError('failed-precondition', 'Não é permitido remover o último admin ativo.');
+    }
+  }
+
+  const auth = getAuth();
+  await auth.deleteUser(data.uid.trim());
+  await targetRef.set({
+    deleted: true,
+    deletedAt: FieldValue.serverTimestamp(),
+    deletedBy: requesterUid,
+    status: 'inativo',
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return { ok: true, data: { deletedUid: data.uid.trim() } };
+});
 
 export const bootstrapSeedData = onCall(async () => {
   const auth = getAuth();
