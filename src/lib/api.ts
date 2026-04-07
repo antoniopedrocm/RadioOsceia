@@ -150,15 +150,19 @@ async function withTimeout<T>(promise: Promise<T>) {
 
 async function getPublicPrograms() {
   const [programsSnapshot, presentersSnapshot] = await Promise.all([
-    getDocs(query(collection(db, 'programs'), where('isActive', '==', true), orderBy('title', 'asc'))),
-    getDocs(query(collection(db, 'presenters'), where('isActive', '==', true), orderBy('name', 'asc')))
+    getDocs(query(collection(db, 'programs'), where('isActive', '==', true))),
+    getDocs(query(collection(db, 'presenters'), where('isActive', '==', true)))
   ]);
 
   const presenters = new Map<string, Record<string, unknown>>(
     presentersSnapshot.docs.map((docItem: { id: string; data: () => Record<string, unknown> }) => [docItem.id, docItem.data()])
   );
 
-  return programsSnapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+  const sortedProgramDocs = programsSnapshot.docs.sort((a, b) =>
+    String(a.data().title ?? '').localeCompare(String(b.data().title ?? ''))
+  );
+
+  return sortedProgramDocs.map((item: { id: string; data: () => Record<string, unknown> }) => {
     const data = item.data();
     const presenter = data.presenterId ? presenters.get(String(data.presenterId)) : null;
 
@@ -174,8 +178,12 @@ async function getPublicPrograms() {
 }
 
 async function getPresenters() {
-  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true), orderBy('name', 'asc')));
-  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true)));
+  const sortedDocs = snapshot.docs.sort((a, b) =>
+    String(a.data().name ?? '').localeCompare(String(b.data().name ?? ''))
+  );
+
+  return sortedDocs.map((item: { id: string; data: () => Record<string, unknown> }) => {
     const data = item.data();
     return {
       id: item.id,
@@ -222,9 +230,12 @@ async function getAdminPrograms() {
 
 
 async function getAdminPresenters() {
-  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true), orderBy('name', 'asc')));
+  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true)));
+  const sortedDocs = snapshot.docs.sort((a, b) =>
+    String(a.data().name ?? '').localeCompare(String(b.data().name ?? ''))
+  );
 
-  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+  return sortedDocs.map((item: { id: string; data: () => Record<string, unknown> }) => {
     const data = item.data();
     return {
       id: item.id,
@@ -315,9 +326,12 @@ async function getAdminMedia() {
 }
 
 async function loadTimelineBlocks(weekday: number): Promise<TimelineScheduleBlock[]> {
-  const snapshot = await getDocs(query(collection(db, 'scheduleBlocks'), where('isActive', '==', true), orderBy('startTime', 'asc')));
+  const snapshot = await getDocs(query(collection(db, 'scheduleBlocks'), where('isActive', '==', true)));
+  const sortedDocs = snapshot.docs.sort((a, b) =>
+    String(a.data().startTime ?? '').localeCompare(String(b.data().startTime ?? ''))
+  );
 
-  return snapshot.docs
+  return sortedDocs
     .map((item: { id: string; data: () => Record<string, unknown> }) => {
       const data = item.data();
       return {
