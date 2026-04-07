@@ -193,11 +193,15 @@ export const saveScheduleBlock = onCall(async (request) => {
 async function loadTimelineBlocks(weekday: number): Promise<TimelineScheduleBlock[]> {
   const blocksSnapshot = await db.collection('scheduleBlocks')
     .where('weekday', '==', weekday)
-    .where('isActive', '==', true)
-    .orderBy('startTime', 'asc')
     .get();
 
-  return blocksSnapshot.docs.map((blockDoc) => {
+  const activeBlocks = blocksSnapshot.docs
+    .filter((doc) => doc.data().isActive === true)
+    .sort((a, b) =>
+      String(a.data().startTime ?? '').localeCompare(String(b.data().startTime ?? ''))
+    );
+
+  return activeBlocks.map((blockDoc) => {
     const blockData = blockDoc.data();
     return {
       id: blockDoc.id,
