@@ -10,10 +10,10 @@ import { useAdminAuth } from '@/contexts/AdminAuthContext';
 export function AdminLoginPage() {
   const [email, setEmail] = useState('admin@irmaoaureo.dev');
   const [password, setPassword] = useState('');
-  const [localUsername, setLocalUsername] = useState('Administrador');
+  const [localUsername, setLocalUsername] = useState('Admin');
   const [localPassword, setLocalPassword] = useState('');
   const [keepConnected, setKeepConnected] = useState(true);
-  const { login, loginWithGoogle, loginLocalBreakGlass, isLocalBreakGlassEnabled, authIssue, clearAuthIssue } = useAdminAuth();
+  const { login, loginWithGoogle, loginLocalRoot, authIssue, clearAuthIssue } = useAdminAuth();
   const [error, setError] = useState<string | null>(null);
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
@@ -41,10 +41,10 @@ export function AdminLoginPage() {
     clearAuthIssue();
     setLoadingLocal(true);
     try {
-      await loginLocalBreakGlass(localUsername, localPassword);
+      await loginLocalRoot(localUsername, localPassword);
       navigate('/admin/dashboard');
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : 'Falha no login de contingência');
+      setError(loginError instanceof Error ? loginError.message : 'Falha no login local de contingência');
     } finally {
       setLoadingLocal(false);
     }
@@ -124,27 +124,22 @@ export function AdminLoginPage() {
               {loadingGoogle ? 'Entrando...' : 'Entrar com Google'}
             </Button>
           </form>
-          {isLocalBreakGlassEnabled ? (
-            <form className="mt-6 space-y-3 border-t pt-4" onSubmit={handleLocalLogin}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Acesso de contingência</p>
-              <div className="space-y-2">
-                <Label htmlFor="local-username">Usuário local</Label>
-                <Input id="local-username" value={localUsername} onChange={(event) => setLocalUsername(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="local-password">Senha local</Label>
-                <Input id="local-password" type="password" value={localPassword} onChange={(event) => setLocalPassword(event.target.value)} />
-              </div>
-              <Button type="submit" variant="outline" className="w-full" disabled={loadingLocal}>
-                {loadingLocal ? 'Validando...' : 'Entrar como Administrador local'}
-              </Button>
-            </form>
-          ) : null}
-          {import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true' && (
-            <p className="mt-4 text-center text-xs text-slate-500">
-              Use as contas seed do Firebase Emulator (admin@irmaoaureo.dev / operador@irmaoaureo.dev).
-            </p>
-          )}
+
+          <form className="mt-6 space-y-3 border-t pt-4" onSubmit={handleLocalLogin}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Acesso local de contingência</p>
+            <div className="space-y-2">
+              <Label htmlFor="local-username">Usuário local</Label>
+              <Input id="local-username" value={localUsername} onChange={(event) => setLocalUsername(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="local-password">Senha local</Label>
+              <Input id="local-password" type="password" value={localPassword} onChange={(event) => setLocalPassword(event.target.value)} />
+            </div>
+            <Button type="submit" variant="outline" className="w-full" disabled={loadingLocal}>
+              {loadingLocal ? 'Validando...' : 'Entrar como Admin local'}
+            </Button>
+          </form>
+
           <Link to="/" className="mt-4 block text-center text-sm font-medium text-blue-600 hover:underline">
             Voltar ao site público
           </Link>

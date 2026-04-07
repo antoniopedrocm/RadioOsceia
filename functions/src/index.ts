@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import * as crypto from 'node:crypto';
 import { parseYoutubeUrl } from './youtube.js';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
@@ -283,9 +284,160 @@ export const getUpNext = onCall(async () => {
 
 export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(timelineAdapter));
 
+
+
+type LocalRootSessionPayload = {
+  sub: 'local-root';
+  username: string;
+  iat: number;
+  exp: number;
+};
+
+function getLocalRootConfig() {
+  return {
+    enabled: process.env.LOCAL_ROOT_ENABLED === 'true',
+    username: process.env.LOCAL_ROOT_USERNAME ?? 'Admin',
+    passwordHash: process.env.LOCAL_ROOT_PASSWORD_HASH ?? '',
+    sessionSecret: process.env.LOCAL_ROOT_SESSION_SECRET ?? ''
+  };
+}
+
+function toBase64Url(input: Buffer | string) {
+  return Buffer.from(input).toString('base64url');
+}
+
+function signLocalRootToken(payload: LocalRootSessionPayload, secret: string) {
+  const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = toBase64Url(JSON.stringify(payload));
+  const signature = toBase64Url(crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest());
+  return `${header}.${body}.${signature}`;
+}
+
+function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const [header, body, signature] = parts;
+  const expected = toBase64Url(crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest());
+  if (signature !== expected) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as LocalRootSessionPayload;
+    if (payload.sub !== 'local-root') return null;
+    if (payload.exp * 1000 <= Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function verifyLocalRootPassword(password: string, encoded: string) {
+  const [algo, salt, hash] = encoded.split('$');
+  if (algo !== 'scrypt' || !salt || !hash) return false;
+
+  const derived = crypto.scryptSync(password, Buffer.from(salt, 'base64'), 32);
+  const expected = Buffer.from(hash, 'base64');
+  if (derived.length !== expected.length) return false;
+  return crypto.timingSafeEqual(derived, expected);
+}
+
+function buildLocalRootUser() {
+  const cfg = getLocalRootConfig();
+  return {
+    id: 'local-root-admin',
+    uid: 'local-root-admin',
+    nome: cfg.username,
+    email: 'local-root@radioosceia.local',
+    perfil: 'root',
+    status: 'ativo',
+    dataCriacao: '',
+    ultimoAcesso: '',
+    provider: 'local',
+    authSource: 'local-root',
+    isProtected: true,
+    isLocalRoot: true,
+    institution: null
+  };
+}
+
+async function isFirebaseAdmin(uid: string) {
+  const userDoc = await db.collection('users').doc(uid).get();
+  return String(userDoc.data()?.role ?? '') === 'admin';
+}
+
+async function requireAdminOrLocalRoot(request: { auth?: { uid?: string } | null; data?: Record<string, unknown> }) {
+  const uid = request.auth?.uid;
+  if (uid && await isFirebaseAdmin(uid)) {
+    return { uid, isLocalRoot: false };
+  }
+
+  const cfg = getLocalRootConfig();
+  const token = typeof request.data?.localRootToken === 'string' ? request.data.localRootToken : '';
+  if (!cfg.enabled || !cfg.sessionSecret || !token) {
+    throw new HttpsError('permission-denied', 'Somente admin Firebase ou root local podem executar esta operação.');
+  }
+
+  const payload = verifyLocalRootToken(token, cfg.sessionSecret);
+  if (!payload || payload.username !== cfg.username) {
+    throw new HttpsError('permission-denied', 'Sessão local root inválida ou expirada.');
+  }
+
+  return { uid: 'local-root-admin', isLocalRoot: true };
+}
+
+async function requireAdminOrOperatorOrLocalRoot(request: { auth?: { uid?: string } | null; data?: Record<string, unknown> }) {
+  const uid = request.auth?.uid;
+  if (uid) {
+    const userDoc = await db.collection('users').doc(uid).get();
+    const role = String(userDoc.data()?.role ?? '');
+    if (role === 'admin' || role === 'operador') {
+      return { uid, role, isLocalRoot: false };
+    }
+  }
+
+  const root = await requireAdminOrLocalRoot(request);
+  return { ...root, role: 'root' as const };
+}
+
+export const loginLocalRoot = onCall(async (request) => {
+  const cfg = getLocalRootConfig();
+  const data = request.data as { username?: string; password?: string };
+
+  if (!cfg.enabled) {
+    throw new HttpsError('failed-precondition', 'Root local está desabilitado.');
+  }
+
+  if (!cfg.passwordHash || !cfg.sessionSecret) {
+    throw new HttpsError('failed-precondition', 'Root local não configurado no servidor.');
+  }
+
+  const username = data.username?.trim() ?? '';
+  const password = data.password?.trim() ?? '';
+
+  if (username !== cfg.username || !verifyLocalRootPassword(password, cfg.passwordHash)) {
+    throw new HttpsError('permission-denied', 'Credenciais do root local inválidas.');
+  }
+
+  const ttlSeconds = 8 * 60 * 60;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const token = signLocalRootToken({
+    sub: 'local-root',
+    username: cfg.username,
+    iat: nowSeconds,
+    exp: nowSeconds + ttlSeconds
+  }, cfg.sessionSecret);
+
+  const session = {
+    token,
+    expiresAt: new Date((nowSeconds + ttlSeconds) * 1000).toISOString(),
+    user: buildLocalRootUser()
+  };
+
+  return { ok: true, session };
+});
+
 export const listAdminUsers = onCall(async (request) => {
-  const uid = requireAuth(request.auth);
-  await requireAdminOrOperator(uid);
+  await requireAdminOrOperatorOrLocalRoot(request);
 
   const auth = getAuth();
   const adminProfilesSnapshot = await db.collection('users').where('role', 'in', ['admin', 'operador']).get();
@@ -315,37 +467,23 @@ export const listAdminUsers = onCall(async (request) => {
         institution: typeof profile?.institution === 'string' ? profile.institution : null
       });
 
-      users.push(viewModel);
+      users.push({ ...viewModel, isProtected: false, isLocalRoot: false });
     });
 
     nextPageToken = result.pageToken;
   } while (nextPageToken);
 
-  if (process.env.LOCAL_ADMIN_ENABLED === 'true') {
-    users.unshift({
-      id: 'local-breakglass-administrador',
-      uid: 'local-breakglass-administrador',
-      nome: 'Administrador',
-      email: process.env.LOCAL_ADMIN_USERNAME ?? 'Administrador',
-      perfil: 'admin',
-      status: 'ativo',
-      dataCriacao: '',
-      ultimoAcesso: '',
-      provider: 'local',
-      authSource: 'local-breakglass',
-      institution: null,
-      disabled: false
-    });
+  if (getLocalRootConfig().enabled) {
+    users.unshift(buildLocalRootUser());
   }
 
   users.sort((a, b) => String(b.dataCriacao ?? '').localeCompare(String(a.dataCriacao ?? '')));
 
-  return { ok: true, data: { users } };
+  return { users };
 });
 
 export const createAdminUser = onCall(async (request) => {
-  const requesterUid = requireAuth(request.auth);
-  await requireAdmin(requesterUid);
+  await requireAdminOrLocalRoot(request);
 
   const data = request.data as { nome?: string; email?: string; senha?: string; perfil?: AdminRole; status?: AdminStatus; institution?: string };
   const role = normalizeAdminRole(data.perfil);
@@ -370,37 +508,38 @@ export const createAdminUser = onCall(async (request) => {
     role,
     status,
     institution: data.institution ?? 'Irmão Áureo',
+    isActive: status === 'ativo',
     createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    updatedBy: requesterUid
+    updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
   return {
     ok: true,
-    data: {
-      user: toAdminUserViewModel({
-        uid: createdUser.uid,
-        email: createdUser.email ?? data.email.trim().toLowerCase(),
-        displayName: createdUser.displayName ?? data.nome.trim(),
-        role,
-        status,
-        disabled: createdUser.disabled,
-        provider: 'password',
-        creationTime: createdUser.metadata.creationTime ?? null,
-        lastSignInTime: createdUser.metadata.lastSignInTime ?? null,
-        institution: data.institution ?? 'Irmão Áureo'
-      })
-    }
+    user: { ...toAdminUserViewModel({
+      uid: createdUser.uid,
+      email: createdUser.email ?? data.email.trim().toLowerCase(),
+      displayName: createdUser.displayName ?? data.nome.trim(),
+      role,
+      status,
+      disabled: createdUser.disabled,
+      provider: 'password',
+      creationTime: createdUser.metadata.creationTime ?? null,
+      lastSignInTime: createdUser.metadata.lastSignInTime ?? null,
+      institution: data.institution ?? 'Irmão Áureo'
+    }), isProtected: false, isLocalRoot: false }
   };
 });
 
 export const updateAdminUser = onCall(async (request) => {
-  const requesterUid = requireAuth(request.auth);
-  await requireAdmin(requesterUid);
+  await requireAdminOrLocalRoot(request);
 
   const data = request.data as { uid?: string; nome?: string; perfil?: AdminRole; status?: AdminStatus; senha?: string; institution?: string };
   if (!data.uid?.trim()) {
     throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
+  }
+
+  if (data.uid === 'local-root-admin') {
+    throw new HttpsError('failed-precondition', 'Usuário root local não é editável por esta operação.');
   }
 
   const role = normalizeAdminRole(data.perfil);
@@ -423,38 +562,39 @@ export const updateAdminUser = onCall(async (request) => {
     email: targetUser.email ?? '',
     role,
     status,
+    isActive: status === 'ativo',
     institution: data.institution ?? 'Irmão Áureo',
-    updatedAt: FieldValue.serverTimestamp(),
-    updatedBy: requesterUid
+    updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
   const updated = await auth.getUser(data.uid.trim());
   return {
     ok: true,
-    data: {
-      user: toAdminUserViewModel({
-        uid: updated.uid,
-        email: updated.email ?? '',
-        displayName: updated.displayName ?? data.nome.trim(),
-        role,
-        status,
-        disabled: updated.disabled,
-        provider: getUserProviderLabel(updated.providerData),
-        creationTime: updated.metadata.creationTime ?? null,
-        lastSignInTime: updated.metadata.lastSignInTime ?? null,
-        institution: data.institution ?? 'Irmão Áureo'
-      })
-    }
+    user: { ...toAdminUserViewModel({
+      uid: updated.uid,
+      email: updated.email ?? '',
+      displayName: updated.displayName ?? data.nome.trim(),
+      role,
+      status,
+      disabled: updated.disabled,
+      provider: getUserProviderLabel(updated.providerData),
+      creationTime: updated.metadata.creationTime ?? null,
+      lastSignInTime: updated.metadata.lastSignInTime ?? null,
+      institution: data.institution ?? 'Irmão Áureo'
+    }), isProtected: false, isLocalRoot: false }
   };
 });
 
-export const toggleAdminUserStatus = onCall(async (request) => {
-  const requesterUid = requireAuth(request.auth);
-  await requireAdmin(requesterUid);
+export const setAdminUserStatus = onCall(async (request) => {
+  await requireAdminOrLocalRoot(request);
 
   const data = request.data as { uid?: string; status?: AdminStatus };
   if (!data.uid?.trim()) {
     throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
+  }
+
+  if (data.uid === 'local-root-admin') {
+    throw new HttpsError('failed-precondition', 'Usuário root local não pode ser desativado por esta operação.');
   }
 
   const status = normalizeAdminStatus(data.status);
@@ -475,38 +615,24 @@ export const toggleAdminUserStatus = onCall(async (request) => {
 
   const auth = getAuth();
   await auth.updateUser(data.uid.trim(), { disabled: status === 'inativo' });
-  await targetRef.set({ status, updatedAt: FieldValue.serverTimestamp(), updatedBy: requesterUid }, { merge: true });
+  await targetRef.set({ status, isActive: status === 'ativo', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
-  const updatedAuthUser = await auth.getUser(data.uid.trim());
-  return {
-    ok: true,
-    data: {
-      user: toAdminUserViewModel({
-        uid: updatedAuthUser.uid,
-        email: updatedAuthUser.email ?? String(targetSnapshot.data()?.email ?? ''),
-        displayName: updatedAuthUser.displayName ?? String(targetSnapshot.data()?.name ?? 'Usuário'),
-        role: targetRole,
-        status,
-        disabled: updatedAuthUser.disabled,
-        provider: getUserProviderLabel(updatedAuthUser.providerData),
-        creationTime: updatedAuthUser.metadata.creationTime ?? null,
-        lastSignInTime: updatedAuthUser.metadata.lastSignInTime ?? null,
-        institution: typeof targetSnapshot.data()?.institution === 'string' ? targetSnapshot.data()?.institution : null
-      })
-    }
-  };
+  return { ok: true };
 });
 
 export const deleteAdminUser = onCall(async (request) => {
-  const requesterUid = requireAuth(request.auth);
-  await requireAdmin(requesterUid);
+  const actor = await requireAdminOrLocalRoot(request);
 
   const data = request.data as { uid?: string };
   if (!data.uid?.trim()) {
     throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
   }
 
-  if (data.uid === requesterUid) {
+  if (data.uid === 'local-root-admin') {
+    throw new HttpsError('failed-precondition', 'Usuário root local não pode ser excluído.');
+  }
+
+  if (!actor.isLocalRoot && data.uid === actor.uid) {
     throw new HttpsError('failed-precondition', 'Você não pode excluir a própria conta.');
   }
 
@@ -530,12 +656,27 @@ export const deleteAdminUser = onCall(async (request) => {
   await targetRef.set({
     deleted: true,
     deletedAt: FieldValue.serverTimestamp(),
-    deletedBy: requesterUid,
     status: 'inativo',
+    isActive: false,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
-  return { ok: true, data: { deletedUid: data.uid.trim() } };
+  return { ok: true };
+});
+
+export const verifyLocalRootSession = onCall(async (request) => {
+  const cfg = getLocalRootConfig();
+  const token = (request.data as { token?: string }).token;
+  if (!cfg.enabled || !cfg.sessionSecret || !token) {
+    return { valid: false };
+  }
+
+  const payload = verifyLocalRootToken(token, cfg.sessionSecret);
+  if (!payload || payload.username !== cfg.username) {
+    return { valid: false };
+  }
+
+  return { valid: true, user: buildLocalRootUser() };
 });
 
 export const bootstrapSeedData = onCall(async () => {

@@ -6,12 +6,12 @@ import { UserTable } from '@/components/admin/UserTable';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
-import { createAdminUser, deleteAdminUser, listAdminUsers, toggleAdminUserStatus, updateAdminUser } from '@/lib/adminUsersApi';
+import { createAdminUser, deleteAdminUser, listAdminUsers, setAdminUserStatus, updateAdminUser } from '@/lib/adminUsersApi';
 import type { AdminUser, UserFormValues } from '@/types/user';
 
 export function SettingsUsersPage() {
-  const { user } = useAdminAuth();
-  const canManageUsers = user?.role === 'admin' && user?.authSource === 'firebase';
+  const { user, isLocalRoot } = useAdminAuth();
+  const canManageUsers = isLocalRoot || user?.role === 'admin';
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -45,11 +45,6 @@ export function SettingsUsersPage() {
     setEditingUser(null);
   };
 
-  const openCreateForm = () => {
-    setEditingUser(null);
-    setIsFormOpen(true);
-  };
-
   const handleEdit = (targetUser: AdminUser) => {
     setEditingUser(targetUser);
     setIsFormOpen(true);
@@ -61,13 +56,6 @@ export function SettingsUsersPage() {
     setFeedback(null);
 
     try {
-      if (editingUser?.authSource === 'local-breakglass') {
-        setUsers((current) => current.map((item) => (item.id === editingUser.id ? { ...item, status: values.status } : item)));
-        setFeedback('Conta local de contingência atualizada.');
-        closeForm();
-        return;
-      }
-
       if (editingUser) {
         const updated = await updateAdminUser({
           uid: editingUser.uid,
@@ -102,18 +90,13 @@ export function SettingsUsersPage() {
   };
 
   const handleToggleStatus = async (target: AdminUser) => {
-    if (target.authSource === 'local-breakglass') {
-      setUsers((current) => current.map((item) => (item.id === target.id ? { ...item, status: item.status === 'ativo' ? 'inativo' : 'ativo' } : item)));
-      return;
-    }
-
     setError(null);
     setFeedback(null);
 
     try {
       const nextStatus = target.status === 'ativo' ? 'inativo' : 'ativo';
-      const updated = await toggleAdminUserStatus({ uid: target.uid, status: nextStatus });
-      setUsers((current) => current.map((item) => (item.uid === updated.uid ? updated : item)));
+      await setAdminUserStatus({ uid: target.uid, status: nextStatus });
+      setUsers((current) => current.map((item) => (item.uid === target.uid ? { ...item, status: nextStatus } : item)));
       setFeedback(`Usuário ${nextStatus === 'ativo' ? 'ativado' : 'desativado'} com sucesso.`);
     } catch (toggleError) {
       setError(toggleError instanceof Error ? toggleError.message : 'Falha ao atualizar status.');
@@ -121,11 +104,6 @@ export function SettingsUsersPage() {
   };
 
   const handleDeleteUser = async (target: AdminUser) => {
-    if (target.authSource === 'local-breakglass') {
-      setError('A conta local de contingência não pode ser excluída.');
-      return;
-    }
-
     if (!window.confirm(`Confirma a exclusão do usuário ${target.nome}?`)) {
       return;
     }
@@ -149,13 +127,10 @@ export function SettingsUsersPage() {
           <Link to="/admin/configuracoes" className="rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900">
             Geral
           </Link>
-          <button type="button" className="rounded-md px-3 py-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900">
-            Instituição
-          </button>
           <span className="rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700">Usuários</span>
         </div>
 
-        <PageHeader title="Usuários do Sistema" description="Gerencie acessos administrativos" />
+        <PageHeader title="Usuários do Sistema" description="Gerencie acessos administrativos reais" />
       </div>
 
       <Card>
@@ -164,11 +139,11 @@ export function SettingsUsersPage() {
             <div>
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {feedback ? <p className="text-sm text-emerald-700">{feedback}</p> : null}
-              {!canManageUsers ? <p className="text-xs text-muted-foreground">Somente administradores Firebase podem gerenciar usuários.</p> : null}
+              {!canManageUsers ? <p className="text-xs text-muted-foreground">Perfil operador possui acesso somente leitura.</p> : null}
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={loadUsers} disabled={isLoading}>Atualizar</Button>
-              {canManageUsers && <Button onClick={openCreateForm}>+ Novo usuário</Button>}
+              {canManageUsers && <Button onClick={() => { setEditingUser(null); setIsFormOpen(true); }}>+ Novo usuário</Button>}
             </div>
           </div>
 
