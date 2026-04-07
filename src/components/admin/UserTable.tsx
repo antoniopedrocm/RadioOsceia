@@ -14,7 +14,8 @@ interface UserTableProps {
 
 const profileLabel: Record<AdminUser['perfil'], string> = {
   admin: 'Admin',
-  operador: 'Operador'
+  operador: 'Operador',
+  root: 'Root'
 };
 
 export function UserTable({ users, canManage, currentUserUid, onEdit, onToggleStatus, onDelete }: UserTableProps) {
@@ -28,8 +29,8 @@ export function UserTable({ users, canManage, currentUserUid, onEdit, onToggleSt
             <Th>Nome</Th>
             <Th>Email</Th>
             <Th>Perfil</Th>
-            <Th>Status</Th>
             <Th>Origem</Th>
+            <Th>Status</Th>
             <Th>Último acesso</Th>
             <Th className="text-right">Ações</Th>
           </Tr>
@@ -37,31 +38,34 @@ export function UserTable({ users, canManage, currentUserUid, onEdit, onToggleSt
         <Tbody>
           {users.map((user) => {
             const isCurrentUser = user.uid === currentUserUid;
-            const isBreakGlass = user.authSource === 'local-breakglass';
+            const isLocalRoot = user.isLocalRoot;
             const isOnlyActiveAdmin = user.perfil === 'admin' && user.status === 'ativo' && user.authSource === 'firebase' && activeAdminsCount <= 1;
-            const blockDelete = isBreakGlass || isCurrentUser || isOnlyActiveAdmin;
-            const blockToggle = isOnlyActiveAdmin || isBreakGlass;
+            const blockDelete = isLocalRoot || isCurrentUser || isOnlyActiveAdmin || user.isProtected;
+            const blockToggle = isOnlyActiveAdmin || isLocalRoot;
+            const blockEdit = isLocalRoot;
 
             return (
               <Tr key={user.id}>
                 <Td className="font-medium text-slate-800">{user.nome}</Td>
                 <Td>{user.email}</Td>
                 <Td>
-                  <Badge className={user.perfil === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-700'}>{profileLabel[user.perfil]}</Badge>
+                  <Badge className={user.perfil === 'root' ? 'bg-amber-100 text-amber-800' : user.perfil === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-700'}>
+                    {profileLabel[user.perfil]}
+                  </Badge>
+                </Td>
+                <Td>
+                  <Badge className={isLocalRoot ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}>
+                    {isLocalRoot ? 'Local' : user.provider ?? 'firebase'}
+                  </Badge>
                 </Td>
                 <Td>
                   <Badge className={user.status === 'ativo' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}>{user.status}</Badge>
-                </Td>
-                <Td>
-                  <Badge className={isBreakGlass ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}>
-                    {isBreakGlass ? 'Local/contingência' : user.provider}
-                  </Badge>
                 </Td>
                 <Td>{user.ultimoAcesso || '—'}</Td>
                 <Td>
                   {canManage ? (
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => onEdit(user)}>
+                      <Button size="sm" variant="outline" onClick={() => onEdit(user)} disabled={blockEdit}>
                         Editar
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => onToggleStatus(user)} disabled={blockToggle}>
@@ -72,7 +76,7 @@ export function UserTable({ users, canManage, currentUserUid, onEdit, onToggleSt
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-right text-xs text-muted-foreground">Sem permissão</p>
+                    <p className="text-right text-xs text-muted-foreground">Somente visualização</p>
                   )}
                 </Td>
               </Tr>

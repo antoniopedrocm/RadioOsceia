@@ -1,11 +1,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/lib/firebase';
-import type { AdminUser, UserStatus } from '@/types/user';
-
-interface CallableResponse<T> {
-  ok: boolean;
-  data: T;
-}
+import { getLocalRootSession } from '@/lib/localRootSession';
+import type { AdminUser, LocalRootSession, UserStatus } from '@/types/user';
 
 interface ListAdminUsersData {
   users: AdminUser[];
@@ -31,9 +27,14 @@ interface DeleteAdminUserPayload {
   uid: string;
 }
 
-interface ToggleAdminUserStatusPayload {
+interface SetAdminUserStatusPayload {
   uid: string;
   status: UserStatus;
+}
+
+interface LoginLocalRootPayload {
+  username: string;
+  password: string;
 }
 
 function getCallableErrorMessage(error: unknown, fallback: string) {
@@ -50,13 +51,21 @@ function assertFunctionsAvailable() {
   }
 }
 
+function withLocalRootAuth<T extends object>(payload?: T): Record<string, unknown> {
+  const session = getLocalRootSession();
+  return {
+    ...((payload ?? {}) as Record<string, unknown>),
+    localRootToken: session?.token ?? null
+  };
+}
+
 export async function listAdminUsers(): Promise<AdminUser[]> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<undefined, CallableResponse<ListAdminUsersData>>(functions, 'listAdminUsers');
+  const callable = httpsCallable<Record<string, unknown>, ListAdminUsersData>(functions, 'listAdminUsers');
 
   try {
-    const response = await callable();
-    return response.data.data.users;
+    const response = await callable(withLocalRootAuth());
+    return response.data.users;
   } catch (error) {
     throw new Error(getCallableErrorMessage(error, 'Não foi possível carregar usuários administrativos.'));
   }
@@ -64,11 +73,11 @@ export async function listAdminUsers(): Promise<AdminUser[]> {
 
 export async function createAdminUser(payload: CreateAdminUserPayload): Promise<AdminUser> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<CreateAdminUserPayload, CallableResponse<{ user: AdminUser }>>(functions, 'createAdminUser');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUser }>(functions, 'createAdminUser');
 
   try {
-    const response = await callable(payload);
-    return response.data.data.user;
+    const response = await callable(withLocalRootAuth(payload));
+    return response.data.user;
   } catch (error) {
     throw new Error(getCallableErrorMessage(error, 'Não foi possível criar usuário administrativo.'));
   }
@@ -76,11 +85,11 @@ export async function createAdminUser(payload: CreateAdminUserPayload): Promise<
 
 export async function updateAdminUser(payload: UpdateAdminUserPayload): Promise<AdminUser> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<UpdateAdminUserPayload, CallableResponse<{ user: AdminUser }>>(functions, 'updateAdminUser');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUser }>(functions, 'updateAdminUser');
 
   try {
-    const response = await callable(payload);
-    return response.data.data.user;
+    const response = await callable(withLocalRootAuth(payload));
+    return response.data.user;
   } catch (error) {
     throw new Error(getCallableErrorMessage(error, 'Não foi possível atualizar usuário administrativo.'));
   }
@@ -88,23 +97,34 @@ export async function updateAdminUser(payload: UpdateAdminUserPayload): Promise<
 
 export async function deleteAdminUser(payload: DeleteAdminUserPayload): Promise<void> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<DeleteAdminUserPayload, CallableResponse<{ deletedUid: string }>>(functions, 'deleteAdminUser');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'deleteAdminUser');
 
   try {
-    await callable(payload);
+    await callable(withLocalRootAuth(payload));
   } catch (error) {
     throw new Error(getCallableErrorMessage(error, 'Não foi possível excluir usuário administrativo.'));
   }
 }
 
-export async function toggleAdminUserStatus(payload: ToggleAdminUserStatusPayload): Promise<AdminUser> {
+export async function setAdminUserStatus(payload: SetAdminUserStatusPayload): Promise<void> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<ToggleAdminUserStatusPayload, CallableResponse<{ user: AdminUser }>>(functions, 'toggleAdminUserStatus');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'setAdminUserStatus');
+
+  try {
+    await callable(withLocalRootAuth(payload));
+  } catch (error) {
+    throw new Error(getCallableErrorMessage(error, 'Não foi possível alterar status do usuário.'));
+  }
+}
+
+export async function loginLocalRoot(payload: LoginLocalRootPayload): Promise<LocalRootSession> {
+  assertFunctionsAvailable();
+  const callable = httpsCallable<LoginLocalRootPayload, { ok: true; session: LocalRootSession }>(functions, 'loginLocalRoot');
 
   try {
     const response = await callable(payload);
-    return response.data.data.user;
+    return response.data.session;
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível alterar status do usuário.'));
+    throw new Error(getCallableErrorMessage(error, 'Não foi possível autenticar o root local.'));
   }
 }
