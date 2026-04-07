@@ -9,10 +9,12 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
   type Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import type { ProgramStatus } from '@/types/program';
 import { parseYoutubeUrl } from '@/lib/youtube';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
@@ -199,16 +201,88 @@ async function getAdminPrograms() {
         ? data.category
         : null;
 
+    const status = normalizeProgramStatus(data.status ?? (data.isActive === false ? 'INACTIVE' : 'ACTIVE'));
+
     return {
       id: item.id,
       title: String(data.title ?? 'Programa sem título'),
+      slug: String(data.slug ?? ''),
+      description: String(data.description ?? ''),
+      shortDescription: String(data.shortDescription ?? ''),
+      coverUrl: String(data.coverUrl ?? ''),
+      presenterId: typeof data.presenterId === 'string' ? data.presenterId : null,
       presenterName,
       categoryName,
-      isActive: Boolean(data.isActive ?? true),
-      status: typeof data.status === 'string' ? String(data.status).toUpperCase() : null
+      tags: Array.isArray(data.tags) ? data.tags.map((tag: unknown) => String(tag)) : [],
+      isActive: status === 'ACTIVE',
+      status
     };
   });
 }
+
+
+async function getAdminPresenters() {
+  const snapshot = await getDocs(query(collection(db, 'presenters'), where('isActive', '==', true), orderBy('name', 'asc')));
+
+  return snapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+    const data = item.data();
+    return {
+      id: item.id,
+      name: String(data.name ?? 'Sem nome')
+    };
+  });
+}
+
+function slugifyProgramTitle(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function normalizeProgramStatus(value: unknown): ProgramStatus {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'ACTIVE' || normalized === 'ATIVO') return 'ACTIVE';
+  if (normalized === 'INACTIVE' || normalized === 'INATIVO') return 'INACTIVE';
+  return 'DRAFT';
+}
+
+function parseProgramTags(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function mapProgramActivity(status: ProgramStatus) {
+  if (status === 'ACTIVE') {
+    return true;
+  }
+
+  return false;
+}
+
+async function assertProgramSlugAvailable(slug: string, currentProgramId?: string) {
+  const trimmedSlug = slug.trim();
+  if (!trimmedSlug) {
+    throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Slug inválido para programa.' });
+  }
+
+  const duplicates = await getDocs(query(collection(db, 'programs'), where('slug', '==', trimmedSlug)));
+  const hasDuplicate = duplicates.docs.some((item: { id: string }) => item.id !== currentProgramId);
+
+  if (hasDuplicate) {
+    throw new ApiError({ code: 'HTTP_ERROR', status: 409, message: 'Já existe um programa com este slug.' });
+  }
+}
+
 
 async function getAdminMedia() {
   const [mediaSnapshot, programsSnapshot] = await Promise.all([
@@ -361,6 +435,122 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
     if (method === 'GET' && path === '/programs') {
       return await withTimeout(getAdminPrograms()) as T;
+    }
+
+    if (method === 'GET' && path === '/presenters') {
+      return await withTimeout(getAdminPresenters()) as T;
+    }
+
+    if (method === 'POST' && path === '/programs') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const title = String(payload.title ?? '').trim();
+      if (!title) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Título é obrigatório para salvar programa.' });
+      }
+
+      const slugBase = String(payload.slug ?? '').trim() || slugifyProgramTitle(title);
+      if (!slugBase) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Não foi possível gerar um slug válido para o programa.' });
+      }
+
+      const status = normalizeProgramStatus(payload.status);
+      await assertProgramSlugAvailable(slugBase);
+
+      const presenterId = payload.presenterId ? String(payload.presenterId) : null;
+      let presenterName: string | null = null;
+      if (presenterId) {
+        const presenterSnapshot = await getDoc(doc(db, 'presenters', presenterId));
+        if (presenterSnapshot.exists()) {
+          presenterName = String(presenterSnapshot.data().name ?? '').trim() || null;
+        }
+      }
+
+      const programRef = await addDoc(collection(db, 'programs'), {
+        title,
+        slug: slugBase,
+        description: String(payload.description ?? '').trim(),
+        shortDescription: String(payload.shortDescription ?? '').trim(),
+        coverUrl: String(payload.coverUrl ?? '').trim(),
+        presenterId,
+        presenterName,
+        categoryName: String(payload.categoryName ?? '').trim() || null,
+        tags: parseProgramTags(payload.tags),
+        status,
+        isActive: mapProgramActivity(status),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: programRef.id } as T);
+    }
+
+    if (method === 'PUT' && path.startsWith('/programs/')) {
+      const programId = path.replace('/programs/', '').trim();
+      if (!programId) {
+        throw new ApiError({ code: 'HTTP_ERROR', status: 400, message: 'Programa inválido para atualização.' });
+      }
+
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const title = String(payload.title ?? '').trim();
+      if (!title) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Título é obrigatório para salvar programa.' });
+      }
+
+      const slugBase = String(payload.slug ?? '').trim() || slugifyProgramTitle(title);
+      if (!slugBase) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Não foi possível gerar um slug válido para o programa.' });
+      }
+
+      const status = normalizeProgramStatus(payload.status);
+      await assertProgramSlugAvailable(slugBase, programId);
+
+      const presenterId = payload.presenterId ? String(payload.presenterId) : null;
+      let presenterName: string | null = null;
+      if (presenterId) {
+        const presenterSnapshot = await getDoc(doc(db, 'presenters', presenterId));
+        if (presenterSnapshot.exists()) {
+          presenterName = String(presenterSnapshot.data().name ?? '').trim() || null;
+        }
+      }
+
+      await updateDoc(doc(db, 'programs', programId), {
+        title,
+        slug: slugBase,
+        description: String(payload.description ?? '').trim(),
+        shortDescription: String(payload.shortDescription ?? '').trim(),
+        coverUrl: String(payload.coverUrl ?? '').trim(),
+        presenterId,
+        presenterName,
+        categoryName: String(payload.categoryName ?? '').trim() || null,
+        tags: parseProgramTags(payload.tags),
+        status,
+        isActive: mapProgramActivity(status),
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: programId } as T);
+    }
+
+    if (method === 'POST' && path.endsWith('/archive') && path.startsWith('/programs/')) {
+      const programId = path.replace('/programs/', '').replace('/archive', '').trim();
+      await updateDoc(doc(db, 'programs', programId), {
+        status: 'INACTIVE',
+        isActive: false,
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: programId } as T);
+    }
+
+    if (method === 'POST' && path.endsWith('/activate') && path.startsWith('/programs/')) {
+      const programId = path.replace('/programs/', '').replace('/activate', '').trim();
+      await updateDoc(doc(db, 'programs', programId), {
+        status: 'ACTIVE',
+        isActive: true,
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: programId } as T);
     }
 
     if (method === 'GET' && path === '/media') {
