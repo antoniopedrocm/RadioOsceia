@@ -5,6 +5,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import bcrypt from 'bcryptjs';
 import * as crypto from 'node:crypto';
 import { parseYoutubeUrl } from './youtube.js';
+import type { CanonicalUser, UserAuthSource, UserRole, UserStatus } from './types/user.js';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
   getDashboardSummary as getSharedDashboardSummary,
@@ -53,6 +54,31 @@ function normalizeAdminStatus(status: unknown): AdminStatus {
   return status === 'inativo' ? 'inativo' : 'ativo';
 }
 
+function toCanonicalRole(role: AdminRole | 'root'): UserRole {
+  if (role === 'root') return 'ROOT';
+  if (role === 'admin') return 'ADMIN';
+  return 'OPERADOR';
+}
+
+function toCanonicalStatus(status: AdminStatus): UserStatus {
+  return status === 'inativo' ? 'INACTIVE' : 'ACTIVE';
+}
+
+function toCanonicalAuthSource(authSource: 'firebase' | 'local-root', provider?: string): UserAuthSource {
+  if (authSource === 'firebase' && provider === 'google') return 'GOOGLE';
+  return 'LOCAL';
+}
+
+function toLegacyRole(role: UserRole): AdminRole | 'root' {
+  if (role === 'ROOT') return 'root';
+  if (role === 'ADMIN') return 'admin';
+  return 'operador';
+}
+
+function toLegacyStatus(status: UserStatus): AdminStatus {
+  return status === 'INACTIVE' ? 'inativo' : 'ativo';
+}
+
 function getUserProviderLabel(providerData: Array<{ providerId?: string }>) {
   if (!providerData.length) return 'password';
   if (providerData.some((provider) => provider.providerId === 'google.com')) return 'google';
@@ -60,31 +86,23 @@ function getUserProviderLabel(providerData: Array<{ providerId?: string }>) {
   return providerData[0]?.providerId ?? 'desconhecido';
 }
 
-function toAdminUserViewModel(params: {
-  uid: string;
-  email: string;
-  displayName: string;
-  role: AdminRole;
-  status: AdminStatus;
-  disabled: boolean;
-  provider: string;
-  creationTime?: string | null;
-  lastSignInTime?: string | null;
+function toAdminUserViewModel(params: CanonicalUser & {
   institution?: string | null;
+  uid?: string;
 }) {
   return {
-    id: params.uid,
-    uid: params.uid,
-    nome: params.displayName,
+    id: params.id,
+    uid: params.uid ?? params.firebaseUid ?? params.id,
+    nome: params.name,
     email: params.email,
-    perfil: params.role,
-    status: params.status,
-    dataCriacao: params.creationTime ?? '',
-    ultimoAcesso: params.lastSignInTime ?? '',
+    perfil: toLegacyRole(params.role),
+    status: toLegacyStatus(params.status),
+    dataCriacao: params.createdAt ?? '',
+    ultimoAcesso: params.lastLoginAt ?? '',
     provider: params.provider,
-    authSource: 'firebase',
+    authSource: params.role === 'ROOT' ? 'local-root' : 'firebase',
     institution: params.institution ?? null,
-    disabled: params.disabled
+    disabled: params.status === 'INACTIVE'
   };
 }
 
@@ -293,8 +311,8 @@ export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(
 
 type LocalRootSessionPayload = {
   sub: 'local-root-admin';
-  role: 'root';
-  authSource: 'local-root';
+  role: 'ROOT';
+  authSource: 'LOCAL';
   username: string;
   exp: number;
 };
@@ -336,8 +354,8 @@ function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPa
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as LocalRootSessionPayload;
     if (payload.sub !== 'local-root-admin') return null;
-    if (payload.role !== 'root') return null;
-    if (payload.authSource !== 'local-root') return null;
+    if (payload.role !== 'ROOT') return null;
+    if (payload.authSource !== 'LOCAL') return null;
     if (typeof payload.username !== 'string' || !payload.username.trim()) return null;
     if (typeof payload.exp !== 'number') return null;
     if (payload.exp * 1000 <= Date.now()) return null;
@@ -355,19 +373,21 @@ async function verifyLocalRootPassword(password: string, passwordHash: string) {
 function buildLocalRootUser() {
   const cfg = getLocalRootConfig();
   return {
+    ...toAdminUserViewModel({
     id: 'local-root-admin',
     uid: 'local-root-admin',
-    nome: cfg.username,
     email: 'local-root@radioosceia.local',
-    perfil: 'root',
-    status: 'ativo',
-    dataCriacao: '',
-    ultimoAcesso: '',
+    name: cfg.username,
+    role: 'ROOT',
+    status: 'ACTIVE',
     provider: 'local-root',
-    authSource: 'local-root',
+    authSource: 'LOCAL',
+    isActive: true,
     isProtected: true,
-    isLocalRoot: true,
     institution: null
+    }),
+    isProtected: true,
+    isLocalRoot: true
   };
 }
 
@@ -451,8 +471,8 @@ export const loginLocalRoot = onCall(async (request) => {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const token = signLocalRootToken({
     sub: 'local-root-admin',
-    role: 'root',
-    authSource: 'local-root',
+    role: 'ROOT',
+    authSource: 'LOCAL',
     username: cfg.username,
     exp: nowSeconds + ttlSeconds
   }, cfg.sessionSecret);
@@ -485,15 +505,18 @@ export const listAdminUsers = onCall(async (request) => {
 
       const status = normalizeAdminStatus(profile?.status ?? (authUser.disabled ? 'inativo' : 'ativo'));
       const viewModel = toAdminUserViewModel({
-        uid: authUser.uid,
+        id: authUser.uid,
+        firebaseUid: authUser.uid,
         email: authUser.email ?? String(profile?.email ?? ''),
-        displayName: authUser.displayName ?? String(profile?.name ?? authUser.email?.split('@')[0] ?? 'Usuário'),
-        role,
-        status,
-        disabled: authUser.disabled,
+        name: authUser.displayName ?? String(profile?.name ?? authUser.email?.split('@')[0] ?? 'Usuário'),
+        role: toCanonicalRole(role),
+        status: toCanonicalStatus(status),
         provider: getUserProviderLabel(authUser.providerData),
-        creationTime: authUser.metadata.creationTime ?? null,
-        lastSignInTime: authUser.metadata.lastSignInTime ?? null,
+        authSource: toCanonicalAuthSource('firebase', getUserProviderLabel(authUser.providerData)),
+        isActive: !authUser.disabled,
+        isProtected: false,
+        createdAt: authUser.metadata.creationTime ?? undefined,
+        lastLoginAt: authUser.metadata.lastSignInTime ?? undefined,
         institution: typeof profile?.institution === 'string' ? profile.institution : null
       });
 
@@ -546,15 +569,18 @@ export const createAdminUser = onCall(async (request) => {
   return {
     ok: true,
     user: { ...toAdminUserViewModel({
-      uid: createdUser.uid,
+      id: createdUser.uid,
+      firebaseUid: createdUser.uid,
       email: createdUser.email ?? data.email.trim().toLowerCase(),
-      displayName: createdUser.displayName ?? data.nome.trim(),
-      role,
-      status,
-      disabled: createdUser.disabled,
+      name: createdUser.displayName ?? data.nome.trim(),
+      role: toCanonicalRole(role),
+      status: toCanonicalStatus(status),
       provider: 'password',
-      creationTime: createdUser.metadata.creationTime ?? null,
-      lastSignInTime: createdUser.metadata.lastSignInTime ?? null,
+      authSource: toCanonicalAuthSource('firebase', 'password'),
+      isActive: !createdUser.disabled,
+      isProtected: false,
+      createdAt: createdUser.metadata.creationTime ?? undefined,
+      lastLoginAt: createdUser.metadata.lastSignInTime ?? undefined,
       institution: data.institution ?? 'Irmão Áureo'
     }), isProtected: false, isLocalRoot: false }
   };
@@ -618,15 +644,18 @@ export const updateAdminUser = onCall(async (request) => {
   return {
     ok: true,
     user: { ...toAdminUserViewModel({
-      uid: updated.uid,
+      id: updated.uid,
+      firebaseUid: updated.uid,
       email: updated.email ?? '',
-      displayName: updated.displayName ?? data.nome.trim(),
-      role,
-      status,
-      disabled: updated.disabled,
+      name: updated.displayName ?? data.nome.trim(),
+      role: toCanonicalRole(role),
+      status: toCanonicalStatus(status),
       provider: getUserProviderLabel(updated.providerData),
-      creationTime: updated.metadata.creationTime ?? null,
-      lastSignInTime: updated.metadata.lastSignInTime ?? null,
+      authSource: toCanonicalAuthSource('firebase', getUserProviderLabel(updated.providerData)),
+      isActive: !updated.disabled,
+      isProtected: false,
+      createdAt: updated.metadata.creationTime ?? undefined,
+      lastLoginAt: updated.metadata.lastSignInTime ?? undefined,
       institution: data.institution ?? 'Irmão Áureo'
     }), isProtected: false, isLocalRoot: false }
   };
