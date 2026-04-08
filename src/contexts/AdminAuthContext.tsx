@@ -10,7 +10,7 @@ import {
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
 import { auth, configureAuthPersistence, db } from '@/lib/firebase';
-import { loginLocalRoot as loginLocalRootApi } from '@/lib/adminUsersApi';
+import { loginLocalRoot as loginLocalRootApi, verifyLocalRootSession as verifyLocalRootSessionApi } from '@/lib/adminUsersApi';
 import {
   clearLocalRootSession,
   getLocalRootSession,
@@ -207,14 +207,25 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const session = getLocalRootSession();
-    if (!isLocalRootSessionValid(session)) {
-      clearLocalRootSession();
-      setLocalRootUserState(null);
-      return;
-    }
+    const hydrateLocalRootSession = async () => {
+      const session = getLocalRootSession();
+      if (!isLocalRootSessionValid(session)) {
+        clearLocalRootSession();
+        setLocalRootUserState(null);
+        return;
+      }
 
-    setLocalRootUserState(localRootUserFromSession());
+      const isValidOnServer = await verifyLocalRootSessionApi(session.token);
+      if (!isValidOnServer) {
+        clearLocalRootSession();
+        setLocalRootUserState(null);
+        return;
+      }
+
+      setLocalRootUserState(localRootUserFromSession());
+    };
+
+    void hydrateLocalRootSession();
   }, []);
 
   const resolvedUser = localRootUserState ?? firebaseUserState;
