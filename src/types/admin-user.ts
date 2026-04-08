@@ -1,3 +1,5 @@
+import type { CanonicalUser, UserRole as CanonicalUserRole, UserStatus as CanonicalUserStatus } from '@/types/user';
+
 export type AdminUserAuthSource = 'firebase' | 'local-root';
 export type AdminUserRole = 'admin' | 'operador' | 'root';
 export type UserProfile = Exclude<AdminUserRole, 'root'>;
@@ -18,6 +20,35 @@ export interface AdminUserRecord {
   isProtected: boolean;
   isLocalRoot: boolean;
   institution?: string | null;
+}
+
+export function toLegacyAdminUserRole(role: CanonicalUserRole): AdminUserRole {
+  if (role === 'ROOT') return 'root';
+  if (role === 'ADMIN') return 'admin';
+  return 'operador';
+}
+
+export function toLegacyAdminUserStatus(status: CanonicalUserStatus): AdminUserStatus {
+  return status === 'INACTIVE' ? 'inativo' : 'ativo';
+}
+
+export function fromCanonicalUser(user: CanonicalUser): AdminUserRecord {
+  const uid = user.firebaseUid ?? user.id;
+  return {
+    id: user.id,
+    uid,
+    nome: user.name,
+    email: user.email,
+    perfil: toLegacyAdminUserRole(user.role),
+    status: toLegacyAdminUserStatus(user.status),
+    dataCriacao: user.createdAt ?? '',
+    ultimoAcesso: user.lastLoginAt ?? '',
+    provider: user.provider ?? null,
+    authSource: user.authSource === 'GOOGLE' ? 'firebase' : user.provider === 'local-root' ? 'local-root' : 'firebase',
+    isProtected: user.isProtected,
+    isLocalRoot: user.role === 'ROOT',
+    institution: null
+  };
 }
 
 export interface UserFormValues {
