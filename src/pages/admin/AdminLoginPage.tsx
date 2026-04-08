@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Lock, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,6 +19,9 @@ export function AdminLoginPage() {
   const [loadingGoogle, setLoadingGoogle] = useState(false);
   const [loadingLocal, setLoadingLocal] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as { message?: string } | null;
+  const permissionMessage = locationState?.message;
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -104,6 +107,7 @@ export function AdminLoginPage() {
               Manter conectado
             </label>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {!error && permissionMessage ? <p className="text-sm text-destructive">{permissionMessage}</p> : null}
             {authIssue ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                 <p className="font-medium">Orientação para acesso administrativo</p>
