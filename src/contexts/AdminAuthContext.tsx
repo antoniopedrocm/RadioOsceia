@@ -46,6 +46,7 @@ type AdminUser = FirebaseAdminUser | LocalRootAdminUser;
 
 interface AdminAuthContextValue {
   isAuthenticated: boolean;
+  isFirebaseAuthenticated: boolean;
   isLoading: boolean;
   userEmail: string | null;
   user: AdminUser | null;
@@ -65,6 +66,15 @@ interface AdminAuthIssue {
   code: string | null;
   category: AdminAuthIssueCategory;
   message: string;
+}
+
+class AdminPermissionError extends Error {
+  code = 'permission-denied';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'AdminPermissionError';
+  }
 }
 
 const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
@@ -152,41 +162,27 @@ async function upsertProfile(firebaseUser: FirebaseUser): Promise<FirebaseAdminU
   const existingData = snapshot.exists() ? snapshot.data() : null;
   const existingRole = existingData?.role;
   const role: AdminRole | null = hasValidAdminRole(existingRole) ? existingRole : null;
-
-  if (!role) {
-    await setDoc(
-      userRef,
-      {
-        id: firebaseUser.uid,
-        name: typeof existingData?.name === 'string' ? existingData.name : firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
-        email: firebaseUser.email ?? '',
-        institution: 'Irmão Áureo',
-        status: existingData?.status === 'inativo' ? 'inativo' : 'ativo',
-        updatedAt: serverTimestamp(),
-        createdAt: snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp()
-      },
-      { merge: true }
-    );
-
-    return null;
-  }
-
-  const profile = toFirebaseAdminUser(firebaseUser, role, typeof existingData?.name === 'string' ? existingData.name : undefined);
+  const name = typeof existingData?.name === 'string' ? existingData.name : firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin';
+  const createdAt = snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp();
 
   await setDoc(
     userRef,
     {
       id: firebaseUser.uid,
-      name: profile.name,
-      email: profile.email,
-      role,
+      name,
+      email: firebaseUser.email ?? '',
       institution: 'Irmão Áureo',
-      status: existingData?.status === 'inativo' ? 'inativo' : 'ativo',
       updatedAt: serverTimestamp(),
-      createdAt: snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp()
+      createdAt
     },
     { merge: true }
   );
+
+  if (!role) {
+    throw new AdminPermissionError('Sua conta não possui role administrativa válida no Firestore.');
+  }
+
+  const profile = toFirebaseAdminUser(firebaseUser, role, name);
 
   return profile;
 }
@@ -210,6 +206,7 @@ function localRootUserFromSession(): LocalRootAdminUser | null {
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [firebaseUserState, setFirebaseUserState] = useState<AdminUser | null>(null);
   const [localRootUserState, setLocalRootUserState] = useState<AdminUser | null>(() => localRootUserFromSession());
+  const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [authIssue, setAuthIssue] = useState<AdminAuthIssue | null>(null);
 
@@ -218,9 +215,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
       try {
         if (!firebaseUser) {
           setFirebaseUserState(null);
+          setIsFirebaseAuthenticated(false);
           return;
         }
 
+      setIsFirebaseAuthenticated(true);
       const profile = await upsertProfile(firebaseUser);
       setFirebaseUserState(profile);
       setAuthIssue(null);
@@ -264,6 +263,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AdminAuthContextValue>(
     () => ({
       isAuthenticated: Boolean(resolvedUser),
+      isFirebaseAuthenticated,
       isLoading,
       user: resolvedUser,
       sessionType,
@@ -281,11 +281,8 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         try {
           const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
           const profile = await upsertProfile(credential.user);
-          if (!profile) {
-            setFirebaseUserState(null);
-            throw new Error('Sua conta não possui perfil administrativo válido para acessar o painel.');
-          }
           setFirebaseUserState(profile);
+          setIsFirebaseAuthenticated(true);
           setLocalRootUserState(null);
           clearLocalRootSession();
         } catch (error) {
@@ -307,11 +304,8 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           const provider = new GoogleAuthProvider();
           const { user: firebaseUser } = await signInWithPopup(auth, provider);
           const profile = await upsertProfile(firebaseUser);
-          if (!profile) {
-            setFirebaseUserState(null);
-            throw new Error('Sua conta não possui perfil administrativo válido para acessar o painel.');
-          }
           setFirebaseUserState(profile);
+          setIsFirebaseAuthenticated(true);
           setLocalRootUserState(null);
           clearLocalRootSession();
         } catch (error) {
@@ -343,6 +337,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         }
 
         setFirebaseUserState(null);
+        setIsFirebaseAuthenticated(false);
         setLocalRootUserState(null);
         clearLocalRootSession();
         setAuthIssue(null);
@@ -351,7 +346,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         setAuthIssue(null);
       }
     }),
-    [authIssue, isLoading, resolvedUser, sessionType]
+    [authIssue, isFirebaseAuthenticated, isLoading, resolvedUser, sessionType]
   );
 
   return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
