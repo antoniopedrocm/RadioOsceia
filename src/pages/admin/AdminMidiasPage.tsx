@@ -1,31 +1,18 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table';
 import { PageHeader } from '@/components/admin/PageHeader';
 import { EmptyState, LoadingState } from '@/components/shared/LoadableMessage';
 import { useApiResource } from '@/hooks/useApiResource';
 import { api, getApiErrorMessage } from '@/lib/api';
-import { MediaCreateModal, type MediaCreatePayload, type MediaStatus } from '@/components/admin/MediaCreateModal';
+import { MediaFormModal } from '@/components/admin/MediaFormModal';
+import type { AdminMediaRecord, MediaStatus, MediaUpdatePayload, MediaUpsertPayload } from '@/types/media';
 
 interface ApiProgram {
   id: string;
   title: string;
 }
-
-interface ApiMedia {
-  id: string;
-  title: string;
-  mediaType: string;
-  sourceType: 'YOUTUBE' | 'LOCAL' | 'EXTERNAL_PLACEHOLDER' | string;
-  durationSeconds: number | null;
-  program?: { title: string } | null;
-  isActive: boolean;
-  notes?: string | null;
-  youtubeUrl?: string | null;
-  fileName?: string | null;
-}
-
-const STATUS_NOTE_PREFIX = '[status:';
 
 function parseDurationLabel(durationSeconds?: number | null) {
   if (!durationSeconds || durationSeconds < 0) {
@@ -57,7 +44,7 @@ function getMediaTypeLabel(mediaType: string) {
   return map[mediaType] ?? mediaType;
 }
 
-function getSourceLabel(media: ApiMedia) {
+function getSourceLabel(media: AdminMediaRecord) {
   const source = media.sourceType.toUpperCase();
   if (source === 'YOUTUBE') {
     return 'YouTube';
@@ -67,20 +54,7 @@ function getSourceLabel(media: ApiMedia) {
     return 'Arquivo externo';
   }
 
-  const fileName = media.fileName?.toLowerCase() ?? '';
-  if (fileName.endsWith('.mp3') || fileName.endsWith('.wav') || fileName.endsWith('.ogg')) {
-    return 'Áudio local';
-  }
-
   return 'Arquivo local';
-}
-
-function getStatusFromMedia(media: ApiMedia): MediaStatus {
-  if (media.notes?.includes(`${STATUS_NOTE_PREFIX}DRAFT]`)) {
-    return 'DRAFT';
-  }
-
-  return media.isActive ? 'ACTIVE' : 'INACTIVE';
 }
 
 function getStatusLabel(status: MediaStatus) {
@@ -89,15 +63,11 @@ function getStatusLabel(status: MediaStatus) {
   return 'Inativo';
 }
 
-function debugLog(...args: Parameters<typeof console.debug>) {
-  if (import.meta.env.DEV) {
-    console.debug(...args);
-  }
-}
-
 export function AdminMidiasPage() {
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | 'view' | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<AdminMediaRecord | null>(null);
+  const [loadingActionById, setLoadingActionById] = useState<string | null>(null);
 
   const programsLoader = useCallback((signal: AbortSignal) => api.get<ApiProgram[]>('/programs', { signal }), []);
   const programsState = useApiResource(programsLoader, {
@@ -105,9 +75,9 @@ export function AdminMidiasPage() {
     fallbackMessage: 'Não foi possível carregar os programas vinculáveis.'
   });
 
-  const mediaLoader = useCallback((signal: AbortSignal) => api.get<ApiMedia[]>('/media', { signal }), []);
+  const mediaLoader = useCallback((signal: AbortSignal) => api.get<AdminMediaRecord[]>('/media', { signal }), []);
   const mediaState = useApiResource(mediaLoader, {
-    initialData: [] as ApiMedia[],
+    initialData: [] as AdminMediaRecord[],
     fallbackMessage: 'Não foi possível carregar a listagem de mídias.'
   });
 
@@ -115,25 +85,25 @@ export function AdminMidiasPage() {
   const errorMessage = programsState.errorMessage || mediaState.errorMessage;
 
   const tableRows = useMemo(() => mediaState.data.map((media) => ({
-    id: media.id,
-    title: media.title,
+    ...media,
     type: getMediaTypeLabel(media.mediaType),
     source: getSourceLabel(media),
     duration: parseDurationLabel(media.durationSeconds),
     linkedProgram: media.program?.title ?? 'Sem programa',
-    status: getStatusLabel(getStatusFromMedia(media))
+    statusLabel: getStatusLabel(media.status)
   })), [mediaState.data]);
 
-  const handleCreateMedia = async (payload: MediaCreatePayload) => {
-    debugLog('[AdminMidiasPage] createMedia:start', payload);
+  const showFeedback = (tone: 'success' | 'error', message: string) => {
+    setFeedback({ tone, message });
+    window.setTimeout(() => setFeedback(null), 4500);
+  };
 
-    const notesWithStatus = [
-      `[status:${payload.status}]`,
-      payload.notes?.trim() || ''
-    ].filter(Boolean).join('\n');
+  const handleCreateMedia = async (payload: MediaUpsertPayload) => {
+    if (payload.source === 'UPLOAD') {
+      throw new Error('Upload local ainda não está habilitado nesta fase Firebase. Use YouTube ou arquivo existente.');
+    }
 
     if (payload.source === 'YOUTUBE') {
-      debugLog('[AdminMidiasPage] createMedia:request', { endpoint: '/media/youtube' });
       await api.post('/media/youtube', {
         title: payload.title,
         mediaType: payload.mediaType,
@@ -142,46 +112,103 @@ export function AdminMidiasPage() {
         durationSeconds: payload.durationSeconds,
         thumbnailUrl: payload.thumbnailUrl,
         status: payload.status,
-        notes: notesWithStatus
+        notes: payload.notes
       });
     }
 
-    if (payload.source === 'UPLOAD') {
-      throw new Error('Upload local ainda não está habilitado nesta fase Firebase. Use YouTube por enquanto.');
-    }
-
     if (payload.source === 'EXISTING_FILE') {
-      debugLog('[AdminMidiasPage] createMedia:request', { endpoint: '/media/local-register' });
       await api.post('/media/local-register', {
         title: payload.title,
         mediaType: payload.mediaType,
         filePath: payload.filePath,
         publicUrl: payload.publicUrl,
+        fileName: payload.fileName,
         durationSeconds: payload.durationSeconds,
         programId: payload.programId,
         status: payload.status,
-        notes: notesWithStatus
+        notes: payload.notes
       });
     }
 
-    debugLog('[AdminMidiasPage] createMedia:success', { title: payload.title });
-    mediaState.reload();
-    setFeedback(`Mídia "${payload.title}" cadastrada com sucesso.`);
-    window.setTimeout(() => setFeedback(null), 4000);
+    await mediaState.reload();
+    showFeedback('success', `Mídia "${payload.title}" cadastrada com sucesso.`);
+  };
+
+  const handleUpdateMedia = async (payload: MediaUpdatePayload) => {
+    await api.put(`/media/${payload.id}`, {
+      title: payload.title,
+      mediaType: payload.mediaType,
+      programId: payload.programId,
+      durationSeconds: payload.durationSeconds,
+      status: payload.status,
+      notes: payload.notes,
+      youtubeUrl: payload.youtubeUrl,
+      thumbnailUrl: payload.thumbnailUrl,
+      filePath: payload.filePath,
+      publicUrl: payload.publicUrl,
+      fileName: payload.fileName
+    });
+
+    await mediaState.reload();
+    showFeedback('success', `Mídia "${payload.title}" atualizada com sucesso.`);
+  };
+
+  const openView = async (mediaId: string) => {
+    try {
+      const details = await api.get<AdminMediaRecord>(`/media/${mediaId}`);
+      setSelectedMedia(details);
+      setModalMode('view');
+    } catch (error) {
+      showFeedback('error', getApiErrorMessage(error, 'Não foi possível carregar detalhes da mídia.'));
+    }
+  };
+
+  const openEdit = async (mediaId: string) => {
+    try {
+      const details = await api.get<AdminMediaRecord>(`/media/${mediaId}`);
+      setSelectedMedia(details);
+      setModalMode('edit');
+    } catch (error) {
+      showFeedback('error', getApiErrorMessage(error, 'Não foi possível carregar mídia para edição.'));
+    }
+  };
+
+  const closeModal = () => {
+    setModalMode(null);
+    setSelectedMedia(null);
+  };
+
+  const handleStatusChange = async (media: AdminMediaRecord, nextStatus: MediaStatus) => {
+    const actionLabel = nextStatus === 'ACTIVE' ? 'ativar' : nextStatus === 'INACTIVE' ? 'arquivar' : 'mover para rascunho';
+    const confirmed = window.confirm(`Deseja ${actionLabel} a mídia "${media.title}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setLoadingActionById(media.id);
+      await api.post(`/media/${media.id}/status`, { status: nextStatus });
+      await mediaState.reload();
+      showFeedback('success', `Status da mídia "${media.title}" atualizado para ${getStatusLabel(nextStatus)}.`);
+    } catch (error) {
+      showFeedback('error', getApiErrorMessage(error, 'Não foi possível atualizar o status da mídia.'));
+    } finally {
+      setLoadingActionById(null);
+    }
   };
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Mídias"
-        description="Liste e cadastre mídias da rádio."
+        description="Liste, visualize, edite e cadastre mídias da rádio."
         action="Nova Mídia"
-        onActionClick={() => setIsCreateOpen(true)}
+        onActionClick={() => setModalMode('create')}
       />
 
       {feedback ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          {feedback}
+        <div className={`rounded-lg border px-4 py-3 text-sm ${feedback.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+          {feedback.message}
         </div>
       ) : null}
 
@@ -206,12 +233,14 @@ export function AdminMidiasPage() {
                 <Th>Duração</Th>
                 <Th>Programa vinculado</Th>
                 <Th>Status</Th>
+                <Th>Ações</Th>
               </Tr>
             </Thead>
             <Tbody>
               {tableRows.length === 0 ? (
                 <Tr>
                   <Td className="py-8 text-sm text-slate-500">Nenhuma mídia cadastrada.</Td>
+                  <Td>-</Td>
                   <Td>-</Td>
                   <Td>-</Td>
                   <Td>-</Td>
@@ -226,7 +255,22 @@ export function AdminMidiasPage() {
                   <Td>{row.duration}</Td>
                   <Td>{row.linkedProgram}</Td>
                   <Td>
-                    <Badge>{row.status}</Badge>
+                    <Badge>{row.statusLabel}</Badge>
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => openView(row.id)}>Visualizar</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => openEdit(row.id)}>Editar</Button>
+                      {row.status === 'ACTIVE' ? (
+                        <Button type="button" size="sm" variant="outline" onClick={() => handleStatusChange(row, 'INACTIVE')} disabled={loadingActionById === row.id}>
+                          Arquivar
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" onClick={() => handleStatusChange(row, 'ACTIVE')} disabled={loadingActionById === row.id}>
+                          Ativar
+                        </Button>
+                      )}
+                    </div>
                   </Td>
                 </Tr>
               ))}
@@ -235,11 +279,29 @@ export function AdminMidiasPage() {
         </div>
       ) : null}
 
-      <MediaCreateModal
-        isOpen={isCreateOpen}
+      <MediaFormModal
+        isOpen={modalMode === 'create'}
+        mode="create"
         programs={programsState.data.map((program) => ({ id: program.id, title: program.title }))}
-        onClose={() => setIsCreateOpen(false)}
-        onSubmit={handleCreateMedia}
+        onClose={closeModal}
+        onCreate={handleCreateMedia}
+      />
+
+      <MediaFormModal
+        isOpen={modalMode === 'edit'}
+        mode="edit"
+        programs={programsState.data.map((program) => ({ id: program.id, title: program.title }))}
+        initialMedia={selectedMedia}
+        onClose={closeModal}
+        onUpdate={handleUpdateMedia}
+      />
+
+      <MediaFormModal
+        isOpen={modalMode === 'view'}
+        mode="view"
+        programs={programsState.data.map((program) => ({ id: program.id, title: program.title }))}
+        initialMedia={selectedMedia}
+        onClose={closeModal}
       />
     </div>
   );

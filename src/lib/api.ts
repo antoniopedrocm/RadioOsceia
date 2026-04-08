@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { ProgramStatus } from '@/types/program';
+import type { AdminMediaRecord, MediaStatus } from '@/types/media';
 import { parseYoutubeUrl } from '@/lib/youtube';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
@@ -58,6 +59,37 @@ const WEEKDAY_INDEX: Record<string, number> = {
   FRIDAY: 5,
   SATURDAY: 6
 };
+
+const STATUS_NOTE_REGEX = /^\[status:(ACTIVE|DRAFT|INACTIVE)\]\s*/i;
+
+function normalizeMediaStatus(value: unknown, notes?: unknown): MediaStatus {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'ACTIVE' || normalized === 'INACTIVE' || normalized === 'DRAFT') {
+    return normalized as MediaStatus;
+  }
+
+  if (typeof notes === 'string') {
+    const matched = notes.match(/^\[status:(ACTIVE|DRAFT|INACTIVE)\]/i);
+    if (matched) {
+      return matched[1].toUpperCase() as MediaStatus;
+    }
+  }
+
+  return 'ACTIVE';
+}
+
+function mapMediaActivity(status: MediaStatus) {
+  return status === 'ACTIVE';
+}
+
+function sanitizeMediaNotes(notes: unknown): string | null {
+  if (typeof notes !== 'string') {
+    return null;
+  }
+
+  const sanitized = notes.replace(STATUS_NOTE_REGEX, '').trim();
+  return sanitized || null;
+}
 
 function mapWeekday(value: unknown): number | null {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 6) {
@@ -305,10 +337,11 @@ async function getAdminMedia() {
     programsSnapshot.docs.map((program: { id: string; data: () => Record<string, unknown> }) => [program.id, String(program.data().title ?? 'Sem programa')])
   );
 
-  return mediaSnapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+  return mediaSnapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }): AdminMediaRecord => {
     const data = item.data();
     const programId = typeof data.programId === 'string' ? data.programId : null;
-    const sourceType = normalizeSourceType(String(data.sourceType ?? 'youtube'));
+    const sourceType = normalizeSourceType(String(data.sourceType ?? 'youtube')) as AdminMediaRecord['sourceType'];
+    const status = normalizeMediaStatus(data.status, data.notes);
 
     return {
       id: item.id,
@@ -316,13 +349,60 @@ async function getAdminMedia() {
       mediaType: String(data.mediaType ?? 'VIDEO'),
       sourceType,
       durationSeconds: Number(data.durationSeconds ?? 0),
+      programId,
       program: programId ? { title: programById.get(programId) ?? 'Sem programa' } : null,
-      isActive: Boolean(data.isActive ?? true),
-      notes: typeof data.notes === 'string' ? data.notes : null,
+      isActive: mapMediaActivity(status),
+      status,
+      notes: sanitizeMediaNotes(data.notes),
       youtubeUrl: typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null,
+      youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : null,
+      embedUrl: typeof data.embedUrl === 'string' ? data.embedUrl : null,
+      thumbnailUrl: typeof data.thumbnailUrl === 'string' ? data.thumbnailUrl : null,
+      filePath: typeof data.filePath === 'string' ? data.filePath : null,
+      publicUrl: typeof data.publicUrl === 'string' ? data.publicUrl : null,
       fileName: typeof data.fileName === 'string' ? data.fileName : null
     };
   });
+}
+
+async function getAdminMediaById(mediaId: string): Promise<AdminMediaRecord> {
+  const mediaSnapshot = await getDoc(doc(db, 'media', mediaId));
+  if (!mediaSnapshot.exists()) {
+    throw new ApiError({ code: 'HTTP_ERROR', status: 404, message: 'Mídia não encontrada.' });
+  }
+
+  const data = mediaSnapshot.data();
+  const programId = typeof data.programId === 'string' ? data.programId : null;
+  let programTitle: string | null = null;
+  if (programId) {
+    const programSnapshot = await getDoc(doc(db, 'programs', programId));
+    if (programSnapshot.exists()) {
+      programTitle = String(programSnapshot.data().title ?? 'Sem programa');
+    }
+  }
+
+  const sourceType = normalizeSourceType(String(data.sourceType ?? 'youtube')) as AdminMediaRecord['sourceType'];
+  const status = normalizeMediaStatus(data.status, data.notes);
+
+  return {
+    id: mediaSnapshot.id,
+    title: String(data.title ?? 'Mídia sem título'),
+    mediaType: String(data.mediaType ?? 'VIDEO'),
+    sourceType,
+    durationSeconds: Number(data.durationSeconds ?? 0),
+    programId,
+    program: programTitle ? { title: programTitle } : null,
+    isActive: mapMediaActivity(status),
+    status,
+    notes: sanitizeMediaNotes(data.notes),
+    youtubeUrl: typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null,
+    youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : null,
+    embedUrl: typeof data.embedUrl === 'string' ? data.embedUrl : null,
+    thumbnailUrl: typeof data.thumbnailUrl === 'string' ? data.thumbnailUrl : null,
+    filePath: typeof data.filePath === 'string' ? data.filePath : null,
+    publicUrl: typeof data.publicUrl === 'string' ? data.publicUrl : null,
+    fileName: typeof data.fileName === 'string' ? data.fileName : null
+  };
 }
 
 async function loadTimelineBlocks(weekday: number): Promise<TimelineScheduleBlock[]> {
@@ -571,18 +651,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       return await withTimeout(getAdminMedia()) as T;
     }
 
+    if (method === 'GET' && path.startsWith('/media/')) {
+      const mediaId = path.replace('/media/', '').trim();
+      if (!mediaId) {
+        throw new ApiError({ code: 'HTTP_ERROR', status: 400, message: 'ID de mídia inválido.' });
+      }
+      return await withTimeout(getAdminMediaById(mediaId)) as T;
+    }
+
     if (method === 'POST' && path === '/media/youtube') {
       const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
       const parsed = parseYoutubeUrl(String(payload.youtubeUrl ?? ''));
+      const status = normalizeMediaStatus(payload.status, payload.notes);
       const mediaRef = await addDoc(collection(db, 'media'), {
         title: String(payload.title ?? '').trim(),
         mediaType: String(payload.mediaType ?? 'VIDEO'),
-        sourceType: 'youtube',
+        sourceType: 'YOUTUBE',
         ...parsed,
         durationSeconds: Number(payload.durationSeconds ?? 0),
         programId: payload.programId ? String(payload.programId) : null,
-        notes: payload.notes ? String(payload.notes) : null,
-        isActive: String(payload.status ?? 'ACTIVE') !== 'INACTIVE',
+        notes: sanitizeMediaNotes(payload.notes),
+        status,
+        isActive: mapMediaActivity(status),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -639,24 +729,79 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
     if (method === 'POST' && path === '/media/local-register') {
       const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
-      const parsed = parseYoutubeUrl(String(payload.publicUrl || payload.filePath || ''));
+      const status = normalizeMediaStatus(payload.status, payload.notes);
       const ref = doc(collection(db, 'media'));
       await setDoc(ref, {
-        title: payload.title,
-        mediaType: payload.mediaType,
-        sourceType: 'external_placeholder',
-        youtubeUrl: parsed.youtubeUrl,
-        youtubeVideoId: parsed.youtubeVideoId,
-        embedUrl: parsed.embedUrl,
-        thumbnailUrl: parsed.thumbnailUrl,
+        title: String(payload.title ?? '').trim(),
+        mediaType: String(payload.mediaType ?? 'AUDIO'),
+        sourceType: 'EXTERNAL_PLACEHOLDER',
+        filePath: String(payload.filePath ?? '').trim(),
+        publicUrl: payload.publicUrl ? String(payload.publicUrl).trim() : null,
+        fileName: payload.fileName ? String(payload.fileName).trim() : null,
         durationSeconds: Number(payload.durationSeconds ?? 0),
-        programId: payload.programId ?? null,
-        notes: payload.notes ?? null,
-        isActive: true,
+        programId: payload.programId ? String(payload.programId) : null,
+        notes: sanitizeMediaNotes(payload.notes),
+        status,
+        isActive: mapMediaActivity(status),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
       return ({ id: ref.id } as T);
+    }
+
+    if (method === 'PUT' && path.startsWith('/media/')) {
+      const mediaId = path.replace('/media/', '').trim();
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const mediaRef = doc(db, 'media', mediaId);
+      const mediaSnapshot = await getDoc(mediaRef);
+      if (!mediaSnapshot.exists()) {
+        throw new ApiError({ code: 'HTTP_ERROR', status: 404, message: 'Mídia não encontrada para atualização.' });
+      }
+
+      const current = mediaSnapshot.data();
+      const currentSourceType = normalizeSourceType(String(current.sourceType ?? 'youtube'));
+      const status = normalizeMediaStatus(payload.status, payload.notes);
+
+      const updatePayload: Record<string, unknown> = {
+        title: String(payload.title ?? '').trim(),
+        mediaType: String(payload.mediaType ?? 'VIDEO').trim(),
+        durationSeconds: Number(payload.durationSeconds ?? 0),
+        programId: payload.programId ? String(payload.programId) : null,
+        notes: sanitizeMediaNotes(payload.notes),
+        status,
+        isActive: mapMediaActivity(status),
+        updatedAt: serverTimestamp()
+      };
+
+      if (currentSourceType === 'YOUTUBE') {
+        const parsed = parseYoutubeUrl(String(payload.youtubeUrl ?? current.youtubeUrl ?? ''));
+        updatePayload.youtubeUrl = parsed.youtubeUrl ?? null;
+        updatePayload.youtubeVideoId = parsed.youtubeVideoId ?? null;
+        updatePayload.embedUrl = parsed.embedUrl ?? null;
+        updatePayload.thumbnailUrl = payload.thumbnailUrl ? String(payload.thumbnailUrl).trim() : (parsed.thumbnailUrl ?? null);
+        updatePayload.filePath = null;
+        updatePayload.publicUrl = null;
+        updatePayload.fileName = null;
+      } else {
+        updatePayload.filePath = String(payload.filePath ?? current.filePath ?? '').trim();
+        updatePayload.publicUrl = payload.publicUrl ? String(payload.publicUrl).trim() : null;
+        updatePayload.fileName = payload.fileName ? String(payload.fileName).trim() : null;
+      }
+
+      await updateDoc(mediaRef, updatePayload);
+      return ({ id: mediaId } as T);
+    }
+
+    if (method === 'POST' && path.endsWith('/status') && path.startsWith('/media/')) {
+      const mediaId = path.replace('/media/', '').replace('/status', '').trim();
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const status = normalizeMediaStatus(payload.status);
+      await updateDoc(doc(db, 'media', mediaId), {
+        status,
+        isActive: mapMediaActivity(status),
+        updatedAt: serverTimestamp()
+      });
+      return ({ id: mediaId, status } as T);
     }
 
     throw new ApiError({ code: 'HTTP_ERROR', status: 404, message: `Rota Firebase não mapeada: ${method} ${path}` });
