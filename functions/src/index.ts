@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import bcrypt from 'bcryptjs';
 import * as crypto from 'node:crypto';
 import { parseYoutubeUrl } from './youtube.js';
 import {
@@ -291,18 +292,25 @@ export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(
 
 
 type LocalRootSessionPayload = {
-  sub: 'local-root';
+  sub: 'local-root-admin';
+  role: 'root';
+  authSource: 'local-root';
   username: string;
-  iat: number;
   exp: number;
 };
 
 function getLocalRootConfig() {
+  const ttlMinutesRaw = Number(process.env.LOCAL_ROOT_SESSION_TTL_MINUTES);
+  const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw >= 5 && ttlMinutesRaw <= 24 * 60
+    ? Math.floor(ttlMinutesRaw)
+    : 8 * 60;
+
   return {
     enabled: process.env.LOCAL_ROOT_ENABLED === 'true',
     username: process.env.LOCAL_ROOT_USERNAME ?? 'Admin',
     passwordHash: process.env.LOCAL_ROOT_PASSWORD_HASH ?? '',
-    sessionSecret: process.env.LOCAL_ROOT_SESSION_SECRET ?? ''
+    sessionSecret: process.env.LOCAL_ROOT_SESSION_SECRET ?? '',
+    sessionTtlMinutes: ttlMinutes
   };
 }
 
@@ -327,7 +335,11 @@ function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPa
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as LocalRootSessionPayload;
-    if (payload.sub !== 'local-root') return null;
+    if (payload.sub !== 'local-root-admin') return null;
+    if (payload.role !== 'root') return null;
+    if (payload.authSource !== 'local-root') return null;
+    if (typeof payload.username !== 'string' || !payload.username.trim()) return null;
+    if (typeof payload.exp !== 'number') return null;
     if (payload.exp * 1000 <= Date.now()) return null;
     return payload;
   } catch {
@@ -335,14 +347,9 @@ function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPa
   }
 }
 
-function verifyLocalRootPassword(password: string, encoded: string) {
-  const [algo, salt, hash] = encoded.split('$');
-  if (algo !== 'scrypt' || !salt || !hash) return false;
-
-  const derived = crypto.scryptSync(password, Buffer.from(salt, 'base64'), 32);
-  const expected = Buffer.from(hash, 'base64');
-  if (derived.length !== expected.length) return false;
-  return crypto.timingSafeEqual(derived, expected);
+async function verifyLocalRootPassword(password: string, passwordHash: string) {
+  if (!passwordHash) return false;
+  return bcrypt.compare(password, passwordHash);
 }
 
 function buildLocalRootUser() {
@@ -356,7 +363,7 @@ function buildLocalRootUser() {
     status: 'ativo',
     dataCriacao: '',
     ultimoAcesso: '',
-    provider: 'local',
+    provider: 'local-root',
     authSource: 'local-root',
     isProtected: true,
     isLocalRoot: true,
@@ -436,16 +443,17 @@ export const loginLocalRoot = onCall(async (request) => {
   const username = data.username?.trim() ?? '';
   const password = data.password?.trim() ?? '';
 
-  if (username !== cfg.username || !verifyLocalRootPassword(password, cfg.passwordHash)) {
+  if (username !== cfg.username || !(await verifyLocalRootPassword(password, cfg.passwordHash))) {
     throw new HttpsError('permission-denied', 'Credenciais do root local inválidas.');
   }
 
-  const ttlSeconds = 8 * 60 * 60;
+  const ttlSeconds = cfg.sessionTtlMinutes * 60;
   const nowSeconds = Math.floor(Date.now() / 1000);
   const token = signLocalRootToken({
-    sub: 'local-root',
+    sub: 'local-root-admin',
+    role: 'root',
+    authSource: 'local-root',
     username: cfg.username,
-    iat: nowSeconds,
     exp: nowSeconds + ttlSeconds
   }, cfg.sessionSecret);
 
