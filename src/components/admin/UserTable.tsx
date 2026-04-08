@@ -1,18 +1,18 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table';
-import type { AdminUser } from '@/types/user';
+import type { AdminUserRecord } from '@/types/admin-user';
 
 interface UserTableProps {
-  users: AdminUser[];
+  users: AdminUserRecord[];
   canManage: boolean;
   currentUserUid?: string;
-  onEdit: (user: AdminUser) => void;
-  onToggleStatus: (user: AdminUser) => void;
-  onDelete: (user: AdminUser) => void;
+  onEdit: (user: AdminUserRecord) => void;
+  onToggleStatus: (user: AdminUserRecord) => void;
+  onDelete: (user: AdminUserRecord) => void;
 }
 
-const profileLabel: Record<AdminUser['perfil'], string> = {
+const profileLabel: Record<AdminUserRecord['perfil'], string> = {
   admin: 'Admin',
   operador: 'Operador',
   root: 'Root'

@@ -1,4 +1,4 @@
-import type { LocalRootSession } from '@/types/user';
+import type { LocalRootSession } from '@/types/admin-user';
 
 export const LOCAL_ROOT_SESSION_KEY = 'radioosceia_local_root_session';
 

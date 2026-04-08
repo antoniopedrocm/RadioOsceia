@@ -3,11 +3,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import type { AdminUser, UserFormValues } from '@/types/user';
+import type { AdminUserRecord, UserFormValues } from '@/types/admin-user';
 
 interface UserFormProps {
   mode: 'create' | 'edit';
-  initialUser?: AdminUser;
+  initialUser?: AdminUserRecord;
   isSubmitting?: boolean;
   onCancel: () => void;
   onSubmit: (values: UserFormValues) => Promise<void> | void;
