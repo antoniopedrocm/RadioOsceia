@@ -22,16 +22,27 @@ type AdminRole = 'admin' | 'operador';
 
 type SessionType = 'firebase' | 'local-root' | null;
 
-interface AdminUser {
+interface BaseAdminUser {
   id: string;
   name: string;
   email: string;
-  role: AdminRole | 'root';
   avatarUrl: string;
   institution: Institution;
-  authSource: 'firebase' | 'local-root';
-  isLocalRoot: boolean;
 }
+
+interface FirebaseAdminUser extends BaseAdminUser {
+  role: AdminRole;
+  authSource: 'firebase';
+  isLocalRoot: false;
+}
+
+interface LocalRootAdminUser extends BaseAdminUser {
+  role: 'root';
+  authSource: 'local-root';
+  isLocalRoot: true;
+}
+
+type AdminUser = FirebaseAdminUser | LocalRootAdminUser;
 
 interface AdminAuthContextValue {
   isAuthenticated: boolean;
@@ -117,7 +128,7 @@ function mapGoogleLoginError(code: string | null): string {
   return 'Não foi possível fazer login com Google. Tente novamente.';
 }
 
-function toFirebaseAdminUser(firebaseUser: FirebaseUser, role: AdminRole, profileName?: string): AdminUser {
+function toFirebaseAdminUser(firebaseUser: FirebaseUser, role: AdminRole, profileName?: string): FirebaseAdminUser {
   return {
     id: firebaseUser.uid,
     name: profileName ?? firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
@@ -134,13 +145,32 @@ function hasValidAdminRole(role: unknown): role is AdminRole {
   return role === 'admin' || role === 'operador';
 }
 
-async function upsertProfile(firebaseUser: FirebaseUser): Promise<AdminUser> {
+async function upsertProfile(firebaseUser: FirebaseUser): Promise<FirebaseAdminUser | null> {
   const userRef = doc(db, 'users', firebaseUser.uid);
   const snapshot = await getDoc(userRef);
 
   const existingData = snapshot.exists() ? snapshot.data() : null;
   const existingRole = existingData?.role;
-  const role: AdminRole = hasValidAdminRole(existingRole) ? existingRole : 'operador';
+  const role: AdminRole | null = hasValidAdminRole(existingRole) ? existingRole : null;
+
+  if (!role) {
+    await setDoc(
+      userRef,
+      {
+        id: firebaseUser.uid,
+        name: typeof existingData?.name === 'string' ? existingData.name : firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
+        email: firebaseUser.email ?? '',
+        institution: 'Irmão Áureo',
+        status: existingData?.status === 'inativo' ? 'inativo' : 'ativo',
+        updatedAt: serverTimestamp(),
+        createdAt: snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp()
+      },
+      { merge: true }
+    );
+
+    return null;
+  }
+
   const profile = toFirebaseAdminUser(firebaseUser, role, typeof existingData?.name === 'string' ? existingData.name : undefined);
 
   await setDoc(
@@ -161,7 +191,7 @@ async function upsertProfile(firebaseUser: FirebaseUser): Promise<AdminUser> {
   return profile;
 }
 
-function localRootUserFromSession() {
+function localRootUserFromSession(): LocalRootAdminUser | null {
   const session = getLocalRootSession();
   if (!isLocalRootSessionValid(session)) return null;
 
@@ -191,9 +221,9 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const profile = await upsertProfile(firebaseUser);
-        setFirebaseUserState(profile);
-        setAuthIssue(null);
+      const profile = await upsertProfile(firebaseUser);
+      setFirebaseUserState(profile);
+      setAuthIssue(null);
       } catch (error) {
         const code = extractFirebaseErrorCode(error);
         setAuthIssue(mapAdminAuthIssue(code));
@@ -251,6 +281,10 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         try {
           const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
           const profile = await upsertProfile(credential.user);
+          if (!profile) {
+            setFirebaseUserState(null);
+            throw new Error('Sua conta não possui perfil administrativo válido para acessar o painel.');
+          }
           setFirebaseUserState(profile);
           setLocalRootUserState(null);
           clearLocalRootSession();
@@ -273,6 +307,10 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           const provider = new GoogleAuthProvider();
           const { user: firebaseUser } = await signInWithPopup(auth, provider);
           const profile = await upsertProfile(firebaseUser);
+          if (!profile) {
+            setFirebaseUserState(null);
+            throw new Error('Sua conta não possui perfil administrativo válido para acessar o painel.');
+          }
           setFirebaseUserState(profile);
           setLocalRootUserState(null);
           clearLocalRootSession();
