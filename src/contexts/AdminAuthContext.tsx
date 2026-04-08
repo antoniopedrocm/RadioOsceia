@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
+import type { AdminUserAuthSource, AdminUserRole, LoginLocalRootPayload } from '@/types/admin-user';
 import { auth, configureAuthPersistence, db } from '@/lib/firebase';
 import { loginLocalRoot as loginLocalRootApi, verifyLocalRootSession as verifyLocalRootSessionApi } from '@/lib/adminUsersApi';
 import {
@@ -18,7 +19,7 @@ import {
   setLocalRootSession
 } from '@/lib/localRootSession';
 
-type AdminRole = 'admin' | 'operador';
+type AdminRole = Exclude<AdminUserRole, 'root'>;
 
 type SessionType = 'firebase' | 'local-root' | null;
 
@@ -32,13 +33,13 @@ interface BaseAdminUser {
 
 interface FirebaseAdminUser extends BaseAdminUser {
   role: AdminRole;
-  authSource: 'firebase';
+  authSource: Extract<AdminUserAuthSource, 'firebase'>;
   isLocalRoot: false;
 }
 
 interface LocalRootAdminUser extends BaseAdminUser {
   role: 'root';
-  authSource: 'local-root';
+  authSource: Extract<AdminUserAuthSource, 'local-root'>;
   isLocalRoot: true;
 }
 
@@ -55,7 +56,7 @@ interface AdminAuthContextValue {
   isLocalRoot: boolean;
   login: (email: string, password: string, keepConnected: boolean) => Promise<void>;
   loginWithGoogle: (remember: boolean) => Promise<void>;
-  loginLocalRoot: (username: string, password: string) => Promise<void>;
+  loginLocalRoot: (username: LoginLocalRootPayload['username'], password: LoginLocalRootPayload['password']) => Promise<void>;
   logout: () => Promise<void>;
   clearAuthIssue: () => void;
 }
@@ -319,7 +320,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
           throw new Error(mapGoogleLoginError(code));
         }
       },
-      loginLocalRoot: async (username: string, password: string) => {
+      loginLocalRoot: async (username: LoginLocalRootPayload['username'], password: LoginLocalRootPayload['password']) => {
         if (!username.trim() || !password.trim()) {
           throw new Error('Informe usuário e senha do root local.');
         }

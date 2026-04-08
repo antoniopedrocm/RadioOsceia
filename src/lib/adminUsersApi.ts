@@ -1,40 +1,18 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/lib/firebase';
 import { getLocalRootSession } from '@/lib/localRootSession';
-import type { AdminUser, LocalRootSession, UserStatus } from '@/types/user';
+import type {
+  AdminUserRecord,
+  CreateAdminUserPayload,
+  DeleteAdminUserPayload,
+  LocalRootSession,
+  LoginLocalRootPayload,
+  SetAdminUserStatusPayload,
+  UpdateAdminUserPayload
+} from '@/types/admin-user';
 
 interface ListAdminUsersData {
-  users: AdminUser[];
-}
-
-interface CreateAdminUserPayload {
-  nome: string;
-  email: string;
-  senha: string;
-  perfil: 'admin' | 'operador';
-  status: UserStatus;
-}
-
-interface UpdateAdminUserPayload {
-  uid: string;
-  nome: string;
-  perfil: 'admin' | 'operador';
-  status: UserStatus;
-  senha?: string;
-}
-
-interface DeleteAdminUserPayload {
-  uid: string;
-}
-
-interface SetAdminUserStatusPayload {
-  uid: string;
-  status: UserStatus;
-}
-
-interface LoginLocalRootPayload {
-  username: string;
-  password: string;
+  users: AdminUserRecord[];
 }
 
 interface VerifyLocalRootSessionPayload {
@@ -63,7 +41,7 @@ function withLocalRootAuth<T extends object>(payload?: T): Record<string, unknow
   };
 }
 
-export async function listAdminUsers(): Promise<AdminUser[]> {
+export async function listAdminUsers(): Promise<AdminUserRecord[]> {
   assertFunctionsAvailable();
   const callable = httpsCallable<Record<string, unknown>, ListAdminUsersData>(functions, 'listAdminUsers');
 
@@ -75,9 +53,9 @@ export async function listAdminUsers(): Promise<AdminUser[]> {
   }
 }
 
-export async function createAdminUser(payload: CreateAdminUserPayload): Promise<AdminUser> {
+export async function createAdminUser(payload: CreateAdminUserPayload): Promise<AdminUserRecord> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUser }>(functions, 'createAdminUser');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUserRecord }>(functions, 'createAdminUser');
 
   try {
     const response = await callable(withLocalRootAuth(payload));
@@ -87,9 +65,9 @@ export async function createAdminUser(payload: CreateAdminUserPayload): Promise<
   }
 }
 
-export async function updateAdminUser(payload: UpdateAdminUserPayload): Promise<AdminUser> {
+export async function updateAdminUser(payload: UpdateAdminUserPayload): Promise<AdminUserRecord> {
   assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUser }>(functions, 'updateAdminUser');
+  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUserRecord }>(functions, 'updateAdminUser');
 
   try {
     const response = await callable(withLocalRootAuth(payload));

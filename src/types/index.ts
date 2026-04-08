@@ -28,3 +28,5 @@ export interface QueueItem {
   inicio: string;
   status: 'No ar' | 'Agendado';
 }
+
+export * from './admin-user';

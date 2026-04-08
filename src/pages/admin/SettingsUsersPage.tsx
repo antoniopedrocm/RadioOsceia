@@ -7,19 +7,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { createAdminUser, deleteAdminUser, listAdminUsers, setAdminUserStatus, updateAdminUser } from '@/lib/adminUsersApi';
-import type { AdminUser, UserFormValues } from '@/types/user';
+import type { AdminUserRecord, UserFormValues } from '@/types/admin-user';
 
 export function SettingsUsersPage() {
   const { user, isLocalRoot } = useAdminAuth();
   const canManageUsers = isLocalRoot || user?.role === 'admin';
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [editingUser, setEditingUser] = useState<AdminUserRecord | null>(null);
 
   const formMode = useMemo(() => (editingUser ? 'edit' : 'create'), [editingUser]);
 
@@ -45,7 +45,7 @@ export function SettingsUsersPage() {
     setEditingUser(null);
   };
 
-  const handleEdit = (targetUser: AdminUser) => {
+  const handleEdit = (targetUser: AdminUserRecord) => {
     setEditingUser(targetUser);
     setIsFormOpen(true);
   };
@@ -89,7 +89,7 @@ export function SettingsUsersPage() {
     }
   };
 
-  const handleToggleStatus = async (target: AdminUser) => {
+  const handleToggleStatus = async (target: AdminUserRecord) => {
     setError(null);
     setFeedback(null);
 
@@ -103,7 +103,7 @@ export function SettingsUsersPage() {
     }
   };
 
-  const handleDeleteUser = async (target: AdminUser) => {
+  const handleDeleteUser = async (target: AdminUserRecord) => {
     if (!window.confirm(`Confirma a exclusão do usuário ${target.nome}?`)) {
       return;
     }
