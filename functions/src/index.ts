@@ -389,6 +389,24 @@ async function requireAdminOrLocalRoot(request: { auth?: { uid?: string } | null
   return { uid: 'local-root-admin', isLocalRoot: true };
 }
 
+async function ensureCanRemoveActiveAdmin(params: { targetUid: string; nextStatus: AdminStatus; nextRole: AdminRole; currentRole: AdminRole | null; currentStatus: AdminStatus }) {
+  const currentlyActiveAdmin = params.currentRole === 'admin' && params.currentStatus === 'ativo';
+  const remainsActiveAdmin = params.nextRole === 'admin' && params.nextStatus === 'ativo';
+
+  if (!currentlyActiveAdmin || remainsActiveAdmin) {
+    return;
+  }
+
+  const activeAdminSnapshot = await db.collection('users')
+    .where('role', '==', 'admin')
+    .where('status', '==', 'ativo')
+    .get();
+
+  if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== params.targetUid).length === 0) {
+    throw new HttpsError('failed-precondition', 'Não é permitido remover/desativar o último admin ativo.');
+  }
+}
+
 async function requireAdminOrOperatorOrLocalRoot(request: { auth?: { uid?: string } | null; data?: Record<string, unknown> }) {
   const uid = request.auth?.uid;
   if (uid) {
@@ -535,7 +553,7 @@ export const createAdminUser = onCall(async (request) => {
 });
 
 export const updateAdminUser = onCall(async (request) => {
-  await requireAdminOrLocalRoot(request);
+  const actor = await requireAdminOrLocalRoot(request);
 
   const data = request.data as { uid?: string; nome?: string; perfil?: AdminRole; status?: AdminStatus; senha?: string; institution?: string };
   if (!data.uid?.trim()) {
@@ -553,15 +571,32 @@ export const updateAdminUser = onCall(async (request) => {
   }
 
   const auth = getAuth();
-  const targetUser = await auth.getUser(data.uid.trim());
-  await auth.updateUser(data.uid.trim(), {
+  const targetUid = data.uid.trim();
+  const targetUser = await auth.getUser(targetUid);
+  const targetSnapshot = await db.collection('users').doc(targetUid).get();
+  const currentRole = normalizeAdminRole(targetSnapshot.data()?.role);
+  const currentStatus = normalizeAdminStatus(targetSnapshot.data()?.status ?? (targetUser.disabled ? 'inativo' : 'ativo'));
+
+  if (!actor.isLocalRoot && actor.uid === targetUid && (role !== 'admin' || status === 'inativo')) {
+    throw new HttpsError('failed-precondition', 'Você não pode remover seu próprio acesso administrativo.');
+  }
+
+  await ensureCanRemoveActiveAdmin({
+    targetUid,
+    nextRole: role,
+    nextStatus: status,
+    currentRole,
+    currentStatus
+  });
+
+  await auth.updateUser(targetUid, {
     displayName: data.nome.trim(),
     disabled: status === 'inativo',
     ...(data.senha?.trim() ? { password: data.senha } : {})
   });
 
-  await db.collection('users').doc(data.uid.trim()).set({
-    id: data.uid.trim(),
+  await db.collection('users').doc(targetUid).set({
+    id: targetUid,
     name: data.nome.trim(),
     email: targetUser.email ?? '',
     role,
@@ -571,7 +606,7 @@ export const updateAdminUser = onCall(async (request) => {
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
-  const updated = await auth.getUser(data.uid.trim());
+  const updated = await auth.getUser(targetUid);
   return {
     ok: true,
     user: { ...toAdminUserViewModel({
@@ -590,7 +625,7 @@ export const updateAdminUser = onCall(async (request) => {
 });
 
 export const setAdminUserStatus = onCall(async (request) => {
-  await requireAdminOrLocalRoot(request);
+  const actor = await requireAdminOrLocalRoot(request);
 
   const data = request.data as { uid?: string; status?: AdminStatus };
   if (!data.uid?.trim()) {
@@ -602,7 +637,12 @@ export const setAdminUserStatus = onCall(async (request) => {
   }
 
   const status = normalizeAdminStatus(data.status);
-  const targetRef = db.collection('users').doc(data.uid.trim());
+  const targetUid = data.uid.trim();
+  if (!actor.isLocalRoot && actor.uid === targetUid && status === 'inativo') {
+    throw new HttpsError('failed-precondition', 'Você não pode desativar a própria conta.');
+  }
+
+  const targetRef = db.collection('users').doc(targetUid);
   const targetSnapshot = await targetRef.get();
   const targetRole = normalizeAdminRole(targetSnapshot.data()?.role);
 
@@ -610,15 +650,17 @@ export const setAdminUserStatus = onCall(async (request) => {
     throw new HttpsError('failed-precondition', 'Usuário alvo não possui perfil administrativo válido.');
   }
 
-  if (targetRole === 'admin' && status === 'inativo') {
-    const activeAdminSnapshot = await db.collection('users').where('role', '==', 'admin').where('status', '==', 'ativo').get();
-    if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== data.uid).length === 0) {
-      throw new HttpsError('failed-precondition', 'Não é permitido desativar o último admin ativo.');
-    }
-  }
+  const targetStatus = normalizeAdminStatus(targetSnapshot.data()?.status);
+  await ensureCanRemoveActiveAdmin({
+    targetUid,
+    nextRole: targetRole,
+    nextStatus: status,
+    currentRole: targetRole,
+    currentStatus: targetStatus
+  });
 
   const auth = getAuth();
-  await auth.updateUser(data.uid.trim(), { disabled: status === 'inativo' });
+  await auth.updateUser(targetUid, { disabled: status === 'inativo' });
   await targetRef.set({ status, isActive: status === 'ativo', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
   return { ok: true };

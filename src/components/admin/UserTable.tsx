@@ -41,7 +41,7 @@ export function UserTable({ users, canManage, currentUserUid, onEdit, onToggleSt
             const isLocalRoot = user.isLocalRoot;
             const isOnlyActiveAdmin = user.perfil === 'admin' && user.status === 'ativo' && user.authSource === 'firebase' && activeAdminsCount <= 1;
             const blockDelete = isLocalRoot || isCurrentUser || isOnlyActiveAdmin || user.isProtected;
-            const blockToggle = isOnlyActiveAdmin || isLocalRoot;
+            const blockToggle = isOnlyActiveAdmin || isLocalRoot || isCurrentUser || user.isProtected;
             const blockEdit = isLocalRoot;
 
             return (

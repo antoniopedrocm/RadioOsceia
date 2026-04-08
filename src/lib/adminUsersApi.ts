@@ -37,6 +37,10 @@ interface LoginLocalRootPayload {
   password: string;
 }
 
+interface VerifyLocalRootSessionPayload {
+  token: string;
+}
+
 function getCallableErrorMessage(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
     return String((error as { message: string }).message);
@@ -126,5 +130,17 @@ export async function loginLocalRoot(payload: LoginLocalRootPayload): Promise<Lo
     return response.data.session;
   } catch (error) {
     throw new Error(getCallableErrorMessage(error, 'Não foi possível autenticar o root local.'));
+  }
+}
+
+export async function verifyLocalRootSession(token: string): Promise<boolean> {
+  assertFunctionsAvailable();
+  const callable = httpsCallable<VerifyLocalRootSessionPayload, { valid: boolean }>(functions, 'verifyLocalRootSession');
+
+  try {
+    const response = await callable({ token });
+    return response.data.valid === true;
+  } catch {
+    return false;
   }
 }
