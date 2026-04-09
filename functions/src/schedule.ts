@@ -1,5 +1,5 @@
 import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot } from 'firebase-admin/firestore';
-import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
+import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
 function getDb() {
@@ -291,7 +291,7 @@ function getScopeDocs(
   return groupDocs.filter((doc) => String(doc.data()?.date ?? '') >= baseDate);
 }
 
-export const createScheduleBlock = async (request: CallableRequest<unknown>) => {
+export const createScheduleBlock = onCall(async (request: CallableRequest<unknown>) => {
   const uid = requireAuth(request.auth);
   await requireAdminOrOperator(uid);
 
@@ -344,9 +344,9 @@ export const createScheduleBlock = async (request: CallableRequest<unknown>) => 
     createdBlockIds,
     recurrenceGroupId
   };
-};
+});
 
-export const updateScheduleBlock = async (request: CallableRequest<unknown>) => {
+export const updateScheduleBlock = onCall(async (request: CallableRequest<unknown>) => {
   const uid = requireAuth(request.auth);
   await requireAdminOrOperator(uid);
 
@@ -419,9 +419,9 @@ export const updateScheduleBlock = async (request: CallableRequest<unknown>) => 
   }
 
   return { ok: true, updatedBlockIds };
-};
+});
 
-export const deleteScheduleBlock = async (request: CallableRequest<unknown>) => {
+export const deleteScheduleBlock = onCall(async (request: CallableRequest<unknown>) => {
   const uid = requireAuth(request.auth);
   await requireAdminOrOperator(uid);
 
@@ -457,9 +457,9 @@ export const deleteScheduleBlock = async (request: CallableRequest<unknown>) => 
   }
 
   return { ok: true, deletedBlockIds: targetDocs.map((doc) => doc.id), deletedBy: uid };
-};
+});
 
-export const reorderScheduleBlockItems = async (request: CallableRequest<unknown>) => {
+export const reorderScheduleBlockItems = onCall(async (request: CallableRequest<unknown>) => {
   const uid = requireAuth(request.auth);
   await requireAdminOrOperator(uid);
 
@@ -482,7 +482,7 @@ export const reorderScheduleBlockItems = async (request: CallableRequest<unknown
   await batch.commit();
 
   return { ok: true };
-};
+});
 
 async function loadBlockItems(blockId: string) {
   const snapshot = await getDb().collection('scheduleBlocks').doc(blockId).collection('items').orderBy('order', 'asc').get();
@@ -505,7 +505,7 @@ function sumDuration(items: Array<{ durationSeconds: number; isEnabled: boolean 
   return items.filter((item) => item.isEnabled).reduce((acc, item) => acc + Number(item.durationSeconds ?? 0), 0);
 }
 
-export const getScheduleDayView = async (request: CallableRequest<unknown>) => {
+export const getScheduleDayView = onCall(async (request: CallableRequest<unknown>) => {
   const data = request.data as { date: string };
   if (!data?.date) {
     throw new HttpsError('invalid-argument', 'A data é obrigatória.');
@@ -537,9 +537,9 @@ export const getScheduleDayView = async (request: CallableRequest<unknown>) => {
   }));
 
   return { date: data.date, blocks };
-};
+});
 
-export const getScheduleWeekView = async (request: CallableRequest<unknown>) => {
+export const getScheduleWeekView = onCall(async (request: CallableRequest<unknown>) => {
   const data = request.data as { weekStartDate: string };
   if (!data?.weekStartDate) {
     throw new HttpsError('invalid-argument', 'weekStartDate é obrigatório.');
@@ -582,7 +582,7 @@ export const getScheduleWeekView = async (request: CallableRequest<unknown>) => 
     weekEndDate: formatDate(end),
     days
   };
-};
+});
 
 export async function resolvePlaybackTimeline(nowIso?: string | null) {
   const now = nowIso ? new Date(nowIso) : new Date();
@@ -675,7 +675,7 @@ export async function resolvePlaybackTimeline(nowIso?: string | null) {
   };
 }
 
-export const getPlaybackTimeline = async (request: CallableRequest<unknown>) => {
+export const getPlaybackTimeline = onCall(async (request: CallableRequest<unknown>) => {
   const data = request.data as { now?: string | null };
   return resolvePlaybackTimeline(data?.now ?? null);
-};
+});
