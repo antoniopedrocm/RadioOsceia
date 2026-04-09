@@ -1,36 +1,52 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/admin/PageHeader';
-import { UserForm } from '@/components/admin/UserForm';
+import { UserForm, type UserFormValues } from '@/components/admin/UserForm';
 import { UserTable } from '@/components/admin/UserTable';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
-import { createAdminUser, deleteAdminUser, listAdminUsers, setAdminUserStatus, updateAdminUser } from '@/lib/adminUsersApi';
-import type { AdminUserRecord, UserFormValues } from '@/types/admin-user';
+import { api, getApiErrorMessage } from '@/lib/api';
+import type { CanonicalUser } from '@/types/user';
+
+type FormMode = 'create' | 'edit' | 'password';
+
+function isAdministrative(user: CanonicalUser) {
+  return user.role === 'ADMIN' || user.role === 'ROOT';
+}
 
 export function SettingsUsersPage() {
   const { user, isLocalRoot } = useAdminAuth();
   const canManageUsers = isLocalRoot || user?.role === 'admin';
 
-  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [users, setUsers] = useState<CanonicalUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<AdminUserRecord | null>(null);
+  const [editingUser, setEditingUser] = useState<CanonicalUser | null>(null);
+  const [formMode, setFormMode] = useState<FormMode>('create');
 
-  const formMode = useMemo(() => (editingUser ? 'edit' : 'create'), [editingUser]);
+  const currentUserUids = useMemo(() => {
+    if (!user) return [];
+    return [user.id];
+  }, [user]);
+
+  const activeAdministrativeCount = useMemo(
+    () => users.filter((item) => item.status === 'ACTIVE' && isAdministrative(item)).length,
+    [users]
+  );
 
   const loadUsers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await listAdminUsers();
-      setUsers(data);
+      const data = await api.listAppUsers();
+      const sorted = [...data.users].sort((a, b) => a.name.localeCompare(b.name));
+      setUsers(sorted);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar usuários administrativos.');
+      setError(getApiErrorMessage(loadError, 'Falha ao carregar usuários administrativos.'));
     } finally {
       setIsLoading(false);
     }
@@ -43,11 +59,31 @@ export function SettingsUsersPage() {
   const closeForm = () => {
     setIsFormOpen(false);
     setEditingUser(null);
+    setFormMode('create');
   };
 
-  const handleEdit = (targetUser: AdminUserRecord) => {
-    setEditingUser(targetUser);
+  const openCreate = () => {
+    setEditingUser(null);
+    setFormMode('create');
     setIsFormOpen(true);
+  };
+
+  const handleEdit = (targetUser: CanonicalUser) => {
+    setEditingUser(targetUser);
+    setFormMode('edit');
+    setIsFormOpen(true);
+  };
+
+  const handleChangePassword = (targetUser: CanonicalUser) => {
+    setEditingUser(targetUser);
+    setFormMode('password');
+    setIsFormOpen(true);
+  };
+
+  const wouldDemoteLastAdministrative = (target: CanonicalUser, nextRole: CanonicalUser['role'], nextStatus: CanonicalUser['status']) => {
+    const isCurrentlyAdministrative = target.status === 'ACTIVE' && isAdministrative(target);
+    const willRemainAdministrative = nextStatus === 'ACTIVE' && (nextRole === 'ADMIN' || nextRole === 'ROOT');
+    return isCurrentlyAdministrative && !willRemainAdministrative && activeAdministrativeCount <= 1;
   };
 
   const handleSaveUser = async (values: UserFormValues) => {
@@ -56,55 +92,99 @@ export function SettingsUsersPage() {
     setFeedback(null);
 
     try {
-      if (editingUser) {
-        const updated = await updateAdminUser({
-          uid: editingUser.uid,
-          nome: values.nome,
-          perfil: values.perfil,
-          status: values.status,
-          senha: values.senha.trim() ? values.senha : undefined
+      if (formMode === 'password' && editingUser) {
+        if (editingUser.authSource !== 'LOCAL') {
+          throw new Error('Alteração de senha disponível apenas para usuários LOCAL.');
+        }
+
+        await api.setAppUserPassword({ uid: editingUser.firebaseUid ?? editingUser.id, password: values.senha });
+        setFeedback('Senha alterada com sucesso.');
+        closeForm();
+        return;
+      }
+
+      if (formMode === 'edit' && editingUser) {
+        const nextRole = values.perfil;
+        const nextStatus = values.status;
+
+        if (editingUser.role === 'ROOT' || editingUser.isProtected) {
+          throw new Error('Usuário root/protegido não pode ser alterado por esta interface.');
+        }
+
+        const editingUid = editingUser.firebaseUid ?? editingUser.id;
+        if (currentUserUids.includes(editingUid) && nextStatus === 'INACTIVE') {
+          throw new Error('Você não pode desativar sua própria conta.');
+        }
+
+        if (wouldDemoteLastAdministrative(editingUser, nextRole, nextStatus)) {
+          throw new Error('Não é permitido remover ou rebaixar o último usuário administrativo ativo.');
+        }
+
+        await api.updateAppUser({
+          uid: editingUid,
+          name: values.nome,
+          role: nextRole,
+          status: nextStatus
         });
 
-        setUsers((current) => current.map((item) => (item.uid === updated.uid ? updated : item)));
+        await loadUsers();
         setFeedback('Usuário atualizado com sucesso.');
         closeForm();
         return;
       }
 
-      const created = await createAdminUser({
-        nome: values.nome,
+      const payload = {
+        name: values.nome,
         email: values.email,
-        senha: values.senha,
-        perfil: values.perfil,
-        status: values.status
-      });
+        authSource: values.origem,
+        role: values.perfil,
+        status: values.status,
+        ...(values.origem === 'LOCAL' ? { password: values.senha } : {})
+      } as const;
 
-      setUsers((current) => [created, ...current]);
+      await api.createAppUser(payload);
+      await loadUsers();
       setFeedback('Usuário criado com sucesso.');
       closeForm();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Não foi possível salvar o usuário.');
+      setError(getApiErrorMessage(saveError, 'Não foi possível salvar o usuário.'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleToggleStatus = async (target: AdminUserRecord) => {
+  const handleToggleStatus = async (target: CanonicalUser) => {
     setError(null);
     setFeedback(null);
 
     try {
-      const nextStatus = target.status === 'ativo' ? 'inativo' : 'ativo';
-      await setAdminUserStatus({ uid: target.uid, status: nextStatus });
-      setUsers((current) => current.map((item) => (item.uid === target.uid ? { ...item, status: nextStatus } : item)));
-      setFeedback(`Usuário ${nextStatus === 'ativo' ? 'ativado' : 'desativado'} com sucesso.`);
+      if (target.role === 'ROOT' || target.isProtected) {
+        throw new Error('Usuário root/protegido não pode ter status alterado.');
+      }
+
+      const targetUid = target.firebaseUid ?? target.id;
+      const nextStatus = target.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+
+      if (currentUserUids.includes(targetUid) && nextStatus === 'INACTIVE') {
+        throw new Error('Você não pode desativar sua própria conta.');
+      }
+
+      if (wouldDemoteLastAdministrative(target, target.role, nextStatus)) {
+        throw new Error('Não é permitido desativar o último usuário administrativo ativo.');
+      }
+
+      await api.updateAppUser({ uid: targetUid, status: nextStatus });
+      await loadUsers();
+      setFeedback(`Usuário ${nextStatus === 'ACTIVE' ? 'ativado' : 'desativado'} com sucesso.`);
     } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : 'Falha ao atualizar status.');
+      setError(getApiErrorMessage(toggleError, 'Falha ao atualizar status.'));
     }
   };
 
-  const handleDeleteUser = async (target: AdminUserRecord) => {
-    if (!window.confirm(`Confirma a exclusão do usuário ${target.nome}?`)) {
+  const handleDeleteUser = async (target: CanonicalUser) => {
+    const targetUid = target.firebaseUid ?? target.id;
+
+    if (!window.confirm(`Confirma a exclusão do usuário ${target.name}?`)) {
       return;
     }
 
@@ -112,11 +192,23 @@ export function SettingsUsersPage() {
     setFeedback(null);
 
     try {
-      await deleteAdminUser({ uid: target.uid });
-      setUsers((current) => current.filter((item) => item.uid !== target.uid));
+      if (target.role === 'ROOT' || target.isProtected) {
+        throw new Error('Usuário root/protegido não pode ser excluído.');
+      }
+
+      if (currentUserUids.includes(targetUid)) {
+        throw new Error('Você não pode excluir sua própria conta.');
+      }
+
+      if (target.status === 'ACTIVE' && isAdministrative(target) && activeAdministrativeCount <= 1) {
+        throw new Error('Não é permitido excluir o último usuário administrativo ativo.');
+      }
+
+      await api.deleteAppUser({ uid: targetUid });
+      await loadUsers();
       setFeedback('Usuário excluído com sucesso.');
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Falha ao excluir usuário.');
+      setError(getApiErrorMessage(deleteError, 'Falha ao excluir usuário.'));
     }
   };
 
@@ -143,7 +235,7 @@ export function SettingsUsersPage() {
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={loadUsers} disabled={isLoading}>Atualizar</Button>
-              {canManageUsers && <Button onClick={() => { setEditingUser(null); setIsFormOpen(true); }}>+ Novo usuário</Button>}
+              {canManageUsers && <Button onClick={openCreate}>+ Novo usuário</Button>}
             </div>
           </div>
 
@@ -155,8 +247,9 @@ export function SettingsUsersPage() {
             <UserTable
               users={users}
               canManage={canManageUsers}
-              currentUserUid={user?.id}
+              currentUserUids={currentUserUids}
               onEdit={handleEdit}
+              onChangePassword={handleChangePassword}
               onToggleStatus={handleToggleStatus}
               onDelete={handleDeleteUser}
             />
@@ -168,8 +261,16 @@ export function SettingsUsersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <Card className="w-full max-w-xl">
             <CardContent className="p-6">
-              <h3 className="mb-1 text-lg font-semibold">{editingUser ? 'Editar usuário' : 'Novo usuário'}</h3>
-              <p className="mb-4 text-sm text-muted-foreground">{editingUser ? 'Atualize os dados do usuário selecionado.' : 'Cadastre um novo acesso administrativo.'}</p>
+              <h3 className="mb-1 text-lg font-semibold">
+                {formMode === 'create' ? 'Novo usuário' : formMode === 'edit' ? 'Editar usuário' : 'Alterar senha'}
+              </h3>
+              <p className="mb-4 text-sm text-muted-foreground">
+                {formMode === 'create'
+                  ? 'Cadastre um novo acesso administrativo.'
+                  : formMode === 'edit'
+                    ? 'Atualize nome, perfil e status do usuário selecionado.'
+                    : 'Defina uma nova senha para o usuário local selecionado.'}
+              </p>
               <UserForm
                 mode={formMode}
                 initialUser={editingUser ?? undefined}
