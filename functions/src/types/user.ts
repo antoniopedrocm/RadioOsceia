@@ -1,1 +1,1 @@
-export * from '../../../src/types/canonical-user.js';
+export * from './canonical-user.js';
