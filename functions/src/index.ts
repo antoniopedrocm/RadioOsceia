@@ -198,6 +198,18 @@ function ensurePassword(value: unknown, fieldName = 'password') {
   if (!password) {
     throw new HttpsError('invalid-argument', `Campo obrigatório: ${fieldName}.`);
   }
+
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasLowercase = /[a-z]/.test(password);
+  const hasNumber = /\d/.test(password);
+  const hasSymbol = /[^A-Za-z0-9]/.test(password);
+  if (!hasUppercase || !hasLowercase || !hasNumber || !hasSymbol) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Campo ${fieldName} deve conter ao menos 1 letra maiúscula, 1 minúscula, 1 número e 1 símbolo.`
+    );
+  }
+
   return password;
 }
 
@@ -712,48 +724,46 @@ export const createAppUser = onCall(async (request) => {
   const name = ensureTrimmedString(payload.name, 'name', { minLength: 2, maxLength: 120 });
   const email = ensureEmail(payload.email);
   const role = ensureCanonicalRole(payload.role);
+  if (role === 'ROOT') {
+    throw new HttpsError('failed-precondition', 'Não é permitido criar usuário com role ROOT por esta operação.');
+  }
   const status = ensureCanonicalStatus(payload.status ?? 'ACTIVE');
   const authSource = ensureAuthSource(payload.authSource ?? 'LOCAL');
   const institution = ensureTrimmedString(payload.institution, 'institution', { required: false, maxLength: 120 }) ?? 'Irmão Áureo';
-  const password = authSource === 'LOCAL'
-    ? ensurePassword(payload.password)
-    : (typeof payload.password === 'string' && payload.password.trim() ? payload.password.trim() : null);
-
-  const auth = getAuth();
-  let firebaseUid: string | null = null;
-  if (authSource === 'GOOGLE') {
-    const existing = await auth.getUserByEmail(email).catch(() => null);
-    if (!existing) {
-      throw new HttpsError('failed-precondition', 'Usuário Google ainda não existe no Firebase Auth.');
-    }
-    firebaseUid = existing.uid;
-  } else if (password) {
-    const created = await auth.createUser({
-      email,
-      password,
-      displayName: name ?? email.split('@')[0],
-      disabled: status === 'INACTIVE'
-    });
-    firebaseUid = created.uid;
+  const passwordInput = typeof payload.password === 'string' && payload.password.trim()
+    ? payload.password.trim()
+    : null;
+  const password = authSource === 'LOCAL' ? ensurePassword(payload.password) : null;
+  if (authSource === 'GOOGLE' && passwordInput) {
+    throw new HttpsError('invalid-argument', 'Usuário com authSource GOOGLE não pode informar password.');
   }
 
-  const userRef = db.collection('users').doc(firebaseUid ?? db.collection('users').doc().id);
+  const duplicatedByEmailSnapshot = await db.collection('users')
+    .where('email', '==', email)
+    .limit(1)
+    .get();
+  if (!duplicatedByEmailSnapshot.empty) {
+    throw new HttpsError('already-exists', 'Já existe usuário cadastrado com este e-mail.');
+  }
+
+  const firebaseUid: string | null = null;
+  const userRef = db.collection('users').doc();
   const canonicalUser: CanonicalUser = {
     id: userRef.id,
-    firebaseUid: firebaseUid ?? undefined,
     email,
     name: name ?? email.split('@')[0],
     role,
     status,
     authSource,
-    provider: authSource === 'GOOGLE' ? 'google' : 'password',
+    provider: authSource === 'GOOGLE' ? 'google' : 'local',
     isActive: status === 'ACTIVE',
-    isProtected: role === 'ROOT',
+    isProtected: false,
     passwordHash: authSource === 'LOCAL' && password ? await bcrypt.hash(password, 12) : undefined
   };
 
   await userRef.set({
     ...canonicalUser,
+    firebaseUid,
     institution,
     lastLoginAt: null,
     createdAt: FieldValue.serverTimestamp(),
