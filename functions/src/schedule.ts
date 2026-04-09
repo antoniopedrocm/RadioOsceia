@@ -1,7 +1,7 @@
-import { FieldValue, Timestamp, getFirestore, type DocumentReference, type DocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 
-const db = getFirestore();
+import { db } from './lib/firebaseAdmin.js';
 
 export type ScheduleBlockStatus = 'ACTIVE' | 'INACTIVE' | 'CANCELLED';
 export type ScheduleRecurrenceType = 'NONE' | 'DAILY' | 'WEEKLY';
