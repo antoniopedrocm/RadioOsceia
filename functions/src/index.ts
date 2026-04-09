@@ -32,6 +32,15 @@ type AdminRole = 'admin' | 'operador';
 type AdminStatus = 'ativo' | 'inativo';
 type LegacyAuthSource = 'firebase' | 'local-root';
 
+type CanonicalSessionPayload = {
+  sub: 'local-app-user';
+  uid: string;
+  role: UserRole;
+  authSource: 'LOCAL';
+  email: string;
+  exp: number;
+};
+
 function requireAuth(auth: { uid: string } | null | undefined) {
   if (!auth?.uid) {
     throw new HttpsError('unauthenticated', 'Usuário não autenticado.');
@@ -113,6 +122,89 @@ function toLegacyAuthSource(authSource: UserAuthSource, role: UserRole, provider
   if (authSource === 'GOOGLE' || provider === 'google') return 'firebase';
   if (provider === 'local-root') return 'local-root';
   return 'firebase';
+}
+
+function ensureObject(value: unknown, fallback = 'Payload inválido.'): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpsError('invalid-argument', fallback);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function ensureTrimmedString(
+  value: unknown,
+  fieldName: string,
+  options: { required?: boolean; minLength?: number; maxLength?: number } = {}
+) {
+  const required = options.required ?? true;
+  if (typeof value !== 'string') {
+    if (!required && (value === undefined || value === null)) return null;
+    throw new HttpsError('invalid-argument', `Campo inválido: ${fieldName}.`);
+  }
+
+  const normalized = value.trim();
+  if (!normalized && required) {
+    throw new HttpsError('invalid-argument', `Campo obrigatório: ${fieldName}.`);
+  }
+
+  if (options.minLength && normalized.length < options.minLength) {
+    throw new HttpsError('invalid-argument', `Campo ${fieldName} deve ter ao menos ${options.minLength} caracteres.`);
+  }
+
+  if (options.maxLength && normalized.length > options.maxLength) {
+    throw new HttpsError('invalid-argument', `Campo ${fieldName} deve ter no máximo ${options.maxLength} caracteres.`);
+  }
+
+  return normalized || null;
+}
+
+function ensureEmail(value: unknown, fieldName = 'email') {
+  const normalized = ensureTrimmedString(value, fieldName, { minLength: 5, maxLength: 320 })?.toLowerCase();
+  if (!normalized) {
+    throw new HttpsError('invalid-argument', `Campo obrigatório: ${fieldName}.`);
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(normalized)) {
+    throw new HttpsError('invalid-argument', `Campo inválido: ${fieldName}.`);
+  }
+
+  return normalized;
+}
+
+function ensureCanonicalRole(role: unknown): UserRole {
+  const normalized = normalizeCanonicalRole(role);
+  if (!normalized) {
+    throw new HttpsError('invalid-argument', 'Campo inválido: role.');
+  }
+  return normalized;
+}
+
+function ensureCanonicalStatus(status: unknown): UserStatus {
+  if (status === 'ACTIVE' || status === 'active' || status === 'ativo') return 'ACTIVE';
+  if (status === 'INACTIVE' || status === 'inactive' || status === 'inativo') return 'INACTIVE';
+  throw new HttpsError('invalid-argument', 'Campo inválido: status.');
+}
+
+function ensureAuthSource(value: unknown): UserAuthSource {
+  if (value === 'LOCAL' || value === 'local') return 'LOCAL';
+  if (value === 'GOOGLE' || value === 'google') return 'GOOGLE';
+  throw new HttpsError('invalid-argument', 'Campo inválido: authSource.');
+}
+
+function ensurePassword(value: unknown, fieldName = 'password') {
+  const password = ensureTrimmedString(value, fieldName, { minLength: 8, maxLength: 128 });
+  if (!password) {
+    throw new HttpsError('invalid-argument', `Campo obrigatório: ${fieldName}.`);
+  }
+  return password;
+}
+
+function assertPasswordHashFormat(hash: string, fieldName = 'passwordHash') {
+  if (!hash.startsWith('$2')) {
+    throw new HttpsError('failed-precondition', `${fieldName} inválido. Use hash bcrypt.`);
+  }
 }
 
 function getUserProviderLabel(providerData: Array<{ providerId?: string }>) {
@@ -387,6 +479,13 @@ function signLocalRootToken(payload: LocalRootSessionPayload, secret: string) {
   return `${header}.${body}.${signature}`;
 }
 
+function signLocalUserToken(payload: CanonicalSessionPayload, secret: string) {
+  const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = toBase64Url(JSON.stringify(payload));
+  const signature = toBase64Url(crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest());
+  return `${header}.${body}.${signature}`;
+}
+
 function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPayload | null {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -407,6 +506,71 @@ function verifyLocalRootToken(token: string, secret: string): LocalRootSessionPa
   } catch {
     return null;
   }
+}
+
+function verifyLocalUserToken(token: string, secret: string): CanonicalSessionPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const [header, body, signature] = parts;
+  const expected = toBase64Url(crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest());
+  if (signature !== expected) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as CanonicalSessionPayload;
+    if (payload.sub !== 'local-app-user') return null;
+    if (!payload.uid?.trim()) return null;
+    if (!payload.email?.trim()) return null;
+    if (payload.authSource !== 'LOCAL') return null;
+    if (typeof payload.exp !== 'number' || payload.exp * 1000 <= Date.now()) return null;
+    if (!normalizeCanonicalRole(payload.role)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function toIsoString(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value && 'toDate' in value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+    return ((value as { toDate: () => Date }).toDate()).toISOString();
+  }
+  return undefined;
+}
+
+function toCanonicalUserFromDoc(docId: string, rawData: Record<string, unknown>): CanonicalUser {
+  const role = normalizeCanonicalRole(rawData.role) ?? 'OPERADOR';
+  const status = normalizeCanonicalStatus(rawData.status);
+  const authSource: UserAuthSource = rawData.authSource === 'GOOGLE' ? 'GOOGLE' : 'LOCAL';
+
+  return {
+    id: docId,
+    firebaseUid: typeof rawData.firebaseUid === 'string' ? rawData.firebaseUid : undefined,
+    email: String(rawData.email ?? ''),
+    name: String(rawData.name ?? ''),
+    role,
+    status,
+    authSource,
+    provider: typeof rawData.provider === 'string' ? rawData.provider : undefined,
+    passwordHash: typeof rawData.passwordHash === 'string' ? rawData.passwordHash : undefined,
+    isActive: status === 'ACTIVE',
+    isProtected: Boolean(rawData.isProtected ?? false),
+    createdAt: toIsoString(rawData.createdAt),
+    updatedAt: toIsoString(rawData.updatedAt),
+    lastLoginAt: toIsoString(rawData.lastLoginAt)
+  };
+}
+
+async function listCanonicalUsers(includeLocalRoot = true): Promise<CanonicalUser[]> {
+  const usersSnapshot = await db.collection('users').get();
+  const users = usersSnapshot.docs.map((docItem) => toCanonicalUserFromDoc(docItem.id, docItem.data() as Record<string, unknown>))
+    .filter((user) => user.role === 'ROOT' || user.role === 'ADMIN' || user.role === 'OPERADOR');
+
+  if (!includeLocalRoot) {
+    return users.filter((user) => user.id !== 'local-root-admin');
+  }
+
+  return users;
 }
 
 async function verifyLocalRootPassword(password: string, passwordHash: string) {
@@ -533,6 +697,346 @@ export const loginLocalRoot = onCall(async (request) => {
   };
 
   return { ok: true, session };
+});
+
+export const listAppUsers = onCall(async (request) => {
+  await requireAdminOrOperatorOrLocalRoot(request);
+  const users = await listCanonicalUsers(true);
+  users.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  return { users };
+});
+
+export const createAppUser = onCall(async (request) => {
+  await requireAdminOrLocalRoot(request);
+  const payload = ensureObject(request.data, 'Payload inválido para criação de usuário.');
+  const name = ensureTrimmedString(payload.name, 'name', { minLength: 2, maxLength: 120 });
+  const email = ensureEmail(payload.email);
+  const role = ensureCanonicalRole(payload.role);
+  const status = ensureCanonicalStatus(payload.status ?? 'ACTIVE');
+  const authSource = ensureAuthSource(payload.authSource ?? 'LOCAL');
+  const institution = ensureTrimmedString(payload.institution, 'institution', { required: false, maxLength: 120 }) ?? 'Irmão Áureo';
+  const password = authSource === 'LOCAL'
+    ? ensurePassword(payload.password)
+    : (typeof payload.password === 'string' && payload.password.trim() ? payload.password.trim() : null);
+
+  const auth = getAuth();
+  let firebaseUid: string | null = null;
+  if (authSource === 'GOOGLE') {
+    const existing = await auth.getUserByEmail(email).catch(() => null);
+    if (!existing) {
+      throw new HttpsError('failed-precondition', 'Usuário Google ainda não existe no Firebase Auth.');
+    }
+    firebaseUid = existing.uid;
+  } else if (password) {
+    const created = await auth.createUser({
+      email,
+      password,
+      displayName: name ?? email.split('@')[0],
+      disabled: status === 'INACTIVE'
+    });
+    firebaseUid = created.uid;
+  }
+
+  const userRef = db.collection('users').doc(firebaseUid ?? db.collection('users').doc().id);
+  const canonicalUser: CanonicalUser = {
+    id: userRef.id,
+    firebaseUid: firebaseUid ?? undefined,
+    email,
+    name: name ?? email.split('@')[0],
+    role,
+    status,
+    authSource,
+    provider: authSource === 'GOOGLE' ? 'google' : 'password',
+    isActive: status === 'ACTIVE',
+    isProtected: role === 'ROOT',
+    passwordHash: authSource === 'LOCAL' && password ? await bcrypt.hash(password, 12) : undefined
+  };
+
+  await userRef.set({
+    ...canonicalUser,
+    institution,
+    lastLoginAt: null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return { ok: true, user: canonicalUser };
+});
+
+export const updateAppUser = onCall(async (request) => {
+  const actor = await requireAdminOrLocalRoot(request);
+  const payload = ensureObject(request.data, 'Payload inválido para atualização de usuário.');
+  const uid = ensureTrimmedString(payload.uid ?? payload.id, 'uid');
+  if (!uid) throw new HttpsError('invalid-argument', 'Campo obrigatório: uid.');
+  if (!actor.isLocalRoot && actor.uid === uid && normalizeCanonicalRole(payload.role) !== 'ADMIN') {
+    throw new HttpsError('failed-precondition', 'Você não pode remover seu próprio acesso administrativo.');
+  }
+
+  const userRef = db.collection('users').doc(uid);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists) {
+    throw new HttpsError('not-found', 'Usuário não encontrado.');
+  }
+
+  const existingUser = toCanonicalUserFromDoc(uid, snapshot.data() as Record<string, unknown>);
+  const role = payload.role ? ensureCanonicalRole(payload.role) : existingUser.role;
+  const status = payload.status ? ensureCanonicalStatus(payload.status) : existingUser.status;
+  const name = payload.name ? ensureTrimmedString(payload.name, 'name', { minLength: 2, maxLength: 120 }) : existingUser.name;
+  const institution = payload.institution
+    ? ensureTrimmedString(payload.institution, 'institution', { required: false, maxLength: 120 }) ?? 'Irmão Áureo'
+    : undefined;
+
+  if (!actor.isLocalRoot && actor.uid === uid && (role !== 'ADMIN' || status !== 'ACTIVE')) {
+    throw new HttpsError('failed-precondition', 'Você não pode perder o próprio acesso administrativo.');
+  }
+
+  await ensureCanRemoveActiveAdmin({
+    targetUid: uid,
+    nextRole: role === 'ADMIN' ? 'admin' : 'operador',
+    nextStatus: status === 'ACTIVE' ? 'ativo' : 'inativo',
+    currentRole: existingUser.role === 'ADMIN' ? 'admin' : existingUser.role === 'OPERADOR' ? 'operador' : null,
+    currentStatus: existingUser.status === 'ACTIVE' ? 'ativo' : 'inativo'
+  });
+
+  if (existingUser.firebaseUid) {
+    await getAuth().updateUser(existingUser.firebaseUid, {
+      displayName: name ?? existingUser.name,
+      disabled: status === 'INACTIVE'
+    });
+  }
+
+  await userRef.set({
+    name: name ?? existingUser.name,
+    role,
+    status,
+    isActive: status === 'ACTIVE',
+    ...(institution ? { institution } : {}),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  const updatedDoc = await userRef.get();
+  return { ok: true, user: toCanonicalUserFromDoc(uid, updatedDoc.data() as Record<string, unknown>) };
+});
+
+export const setAppUserPassword = onCall(async (request) => {
+  await requireAdminOrLocalRoot(request);
+  const payload = ensureObject(request.data, 'Payload inválido para atualização de senha.');
+  const uid = ensureTrimmedString(payload.uid ?? payload.id, 'uid');
+  if (!uid) throw new HttpsError('invalid-argument', 'Campo obrigatório: uid.');
+  const password = ensurePassword(payload.password);
+
+  const userRef = db.collection('users').doc(uid);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists) {
+    throw new HttpsError('not-found', 'Usuário não encontrado.');
+  }
+
+  const user = toCanonicalUserFromDoc(uid, snapshot.data() as Record<string, unknown>);
+  if (user.authSource === 'GOOGLE' && !user.firebaseUid) {
+    throw new HttpsError('failed-precondition', 'Usuário Google sem vínculo Firebase não suporta senha local.');
+  }
+
+  if (user.firebaseUid) {
+    await getAuth().updateUser(user.firebaseUid, { password });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await userRef.set({
+    authSource: 'LOCAL',
+    provider: 'password',
+    passwordHash,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return { ok: true };
+});
+
+export const deleteAppUser = onCall(async (request) => {
+  const actor = await requireAdminOrLocalRoot(request);
+  const payload = ensureObject(request.data, 'Payload inválido para exclusão de usuário.');
+  const uid = ensureTrimmedString(payload.uid ?? payload.id, 'uid');
+  if (!uid) throw new HttpsError('invalid-argument', 'Campo obrigatório: uid.');
+  if (!actor.isLocalRoot && actor.uid === uid) {
+    throw new HttpsError('failed-precondition', 'Você não pode excluir a própria conta.');
+  }
+
+  const userRef = db.collection('users').doc(uid);
+  const snapshot = await userRef.get();
+  if (!snapshot.exists) {
+    throw new HttpsError('not-found', 'Usuário não encontrado.');
+  }
+
+  const user = toCanonicalUserFromDoc(uid, snapshot.data() as Record<string, unknown>);
+  await ensureCanRemoveActiveAdmin({
+    targetUid: uid,
+    nextRole: user.role === 'ADMIN' ? 'operador' : 'operador',
+    nextStatus: 'inativo',
+    currentRole: user.role === 'ADMIN' ? 'admin' : user.role === 'OPERADOR' ? 'operador' : null,
+    currentStatus: user.status === 'ACTIVE' ? 'ativo' : 'inativo'
+  });
+
+  if (user.firebaseUid) {
+    await getAuth().deleteUser(user.firebaseUid).catch(() => null);
+  }
+
+  await userRef.set({
+    deleted: true,
+    deletedAt: FieldValue.serverTimestamp(),
+    status: 'INACTIVE',
+    isActive: false,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return { ok: true };
+});
+
+export const loginLocalUser = onCall(async (request) => {
+  const payload = ensureObject(request.data, 'Payload inválido para login local.');
+  const email = ensureEmail(payload.email);
+  const password = ensurePassword(payload.password);
+  const secret = process.env.LOCAL_ROOT_SESSION_SECRET?.trim() ?? '';
+  if (!secret) {
+    throw new HttpsError('failed-precondition', 'Segredo de sessão local não configurado.');
+  }
+
+  const userSnapshot = await db.collection('users')
+    .where('email', '==', email)
+    .where('authSource', '==', 'LOCAL')
+    .limit(1)
+    .get();
+
+  const userDoc = userSnapshot.docs[0];
+  if (!userDoc) {
+    throw new HttpsError('permission-denied', 'Credenciais inválidas.');
+  }
+
+  const user = toCanonicalUserFromDoc(userDoc.id, userDoc.data() as Record<string, unknown>);
+  if (user.status !== 'ACTIVE') {
+    throw new HttpsError('permission-denied', 'Conta inativa.');
+  }
+
+  const passwordHash = user.passwordHash ?? '';
+  assertPasswordHashFormat(passwordHash);
+  const valid = await bcrypt.compare(password, passwordHash);
+  if (!valid) {
+    throw new HttpsError('permission-denied', 'Credenciais inválidas.');
+  }
+
+  const ttlMinutes = Number(process.env.LOCAL_ROOT_SESSION_TTL_MINUTES ?? '480');
+  const ttlSeconds = Math.max(5, ttlMinutes) * 60;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const token = signLocalUserToken({
+    sub: 'local-app-user',
+    uid: user.id,
+    role: user.role,
+    authSource: 'LOCAL',
+    email: user.email,
+    exp: nowSeconds + ttlSeconds
+  }, secret);
+
+  await userDoc.ref.set({
+    lastLoginAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return {
+    ok: true,
+    session: {
+      token,
+      expiresAt: new Date((nowSeconds + ttlSeconds) * 1000).toISOString(),
+      user: {
+        ...user,
+        lastLoginAt: new Date().toISOString()
+      }
+    }
+  };
+});
+
+export const verifyLocalSession = onCall(async (request) => {
+  const payload = ensureObject(request.data, 'Payload inválido para validação de sessão.');
+  const token = ensureTrimmedString(payload.token, 'token');
+  if (!token) return { valid: false };
+
+  const secret = process.env.LOCAL_ROOT_SESSION_SECRET?.trim() ?? '';
+  if (!secret) return { valid: false };
+  const parsed = verifyLocalUserToken(token, secret);
+  if (!parsed) return { valid: false };
+
+  const userDoc = await db.collection('users').doc(parsed.uid).get();
+  if (!userDoc.exists) return { valid: false };
+  const user = toCanonicalUserFromDoc(userDoc.id, userDoc.data() as Record<string, unknown>);
+  if (user.status !== 'ACTIVE') return { valid: false };
+
+  return { valid: true, user };
+});
+
+export const linkGoogleUserOnFirstLogin = onCall(async (request) => {
+  const uid = requireAuth(request.auth);
+  const authUser = await getAuth().getUser(uid);
+  const email = (authUser.email ?? '').trim().toLowerCase();
+  if (!email) {
+    throw new HttpsError('failed-precondition', 'Usuário autenticado sem e-mail.');
+  }
+
+  const isGoogleAccount = authUser.providerData.some((provider) => provider.providerId === 'google.com');
+  if (!isGoogleAccount) {
+    throw new HttpsError('failed-precondition', 'Operação válida apenas para login Google.');
+  }
+
+  const userRef = db.collection('users').doc(uid);
+  const existingByUid = await userRef.get();
+  if (existingByUid.exists) {
+    await userRef.set({
+      email,
+      authSource: 'GOOGLE',
+      provider: 'google',
+      firebaseUid: uid,
+      lastLoginAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    const linked = await userRef.get();
+    return { ok: true, linked: false, user: toCanonicalUserFromDoc(uid, linked.data() as Record<string, unknown>) };
+  }
+
+  const byEmailSnapshot = await db.collection('users')
+    .where('email', '==', email)
+    .limit(1)
+    .get();
+
+  const existingByEmail = byEmailSnapshot.docs[0];
+  const baseRole = normalizeCanonicalRole(existingByEmail?.data()?.role) ?? 'OPERADOR';
+  const baseStatus = normalizeCanonicalStatus(existingByEmail?.data()?.status);
+  const baseProtected = Boolean(existingByEmail?.data()?.isProtected ?? false);
+  const baseCreatedAt = existingByEmail?.data()?.createdAt ?? FieldValue.serverTimestamp();
+
+  if (existingByEmail && existingByEmail.id !== uid) {
+    await existingByEmail.ref.set({
+      firebaseUid: uid,
+      authSource: 'GOOGLE',
+      provider: 'google',
+      lastLoginAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+
+  await userRef.set({
+    id: uid,
+    email,
+    name: authUser.displayName ?? email.split('@')[0],
+    role: baseRole,
+    status: baseStatus,
+    authSource: 'GOOGLE',
+    provider: 'google',
+    isActive: baseStatus === 'ACTIVE',
+    isProtected: baseProtected,
+    firebaseUid: uid,
+    lastLoginAt: FieldValue.serverTimestamp(),
+    createdAt: baseCreatedAt,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  const linkedDoc = await userRef.get();
+  return { ok: true, linked: true, user: toCanonicalUserFromDoc(uid, linkedDoc.data() as Record<string, unknown>) };
 });
 
 export const listAdminUsers = onCall(async (request) => {
@@ -853,6 +1357,11 @@ export const bootstrapRootAdmin = onCall(async () => {
     );
   }
 
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError('failed-precondition', 'ROOT_ADMIN_EMAIL inválido.');
+  }
+  assertPasswordHashFormat(passwordHash, 'ROOT_ADMIN_PASSWORD_HASH');
+
   const existingRootSnapshot = await db.collection('users')
     .where('role', '==', 'ROOT')
     .where('authSource', '==', 'LOCAL')
@@ -862,21 +1371,24 @@ export const bootstrapRootAdmin = onCall(async () => {
 
   const existingRoot = existingRootSnapshot.docs[0];
   if (existingRoot) {
-    const existingData = existingRoot.data();
+    const existingData = existingRoot.data() as Record<string, unknown>;
+    await existingRoot.ref.set({
+      name: username,
+      email,
+      passwordHash,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    const canonicalUser = toCanonicalUserFromDoc(existingRoot.id, {
+      ...existingData,
+      name: username,
+      email,
+      passwordHash
+    });
     return {
       ok: true,
       created: false,
-      user: {
-        id: existingRoot.id,
-        name: String(existingData.name ?? username),
-        email: String(existingData.email ?? email),
-        role: 'ROOT' as const,
-        authSource: 'LOCAL' as const,
-        status: String(existingData.status ?? 'ACTIVE'),
-        isActive: Boolean(existingData.isActive ?? true),
-        isProtected: true,
-        provider: String(existingData.provider ?? 'local')
-      }
+      user: canonicalUser
     };
   }
 
@@ -910,7 +1422,9 @@ export const bootstrapRootAdmin = onCall(async () => {
       status: 'ACTIVE' as const,
       isActive: true,
       isProtected: true,
-      provider: 'local'
+      provider: 'local',
+      firebaseUid: undefined,
+      passwordHash: undefined
     }
   };
 });
