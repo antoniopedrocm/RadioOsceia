@@ -3,6 +3,7 @@ import { api } from '@/lib/api';
 import { useApiResource } from '@/hooks/useApiResource';
 import type { Presenter, Program } from '@/types';
 import type { DashboardSummary, NowPlayingResponse } from '@/types/api';
+import type { PlaybackTimelineResponse } from '@/types/schedule';
 
 interface ApiProgram {
   id: string;
@@ -56,20 +57,34 @@ const EMPTY_DASHBOARD: DashboardSummary = {
 const EMPTY_TIMELINE: TimelineBlock[] = [];
 
 export function useNowPlaying() {
-  const loader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/irmao-aureo/now-playing', { signal }), []);
+  const loader = useCallback((_signal: AbortSignal) => api.getPlaybackTimeline(), []);
 
   return useApiResource(loader, {
     initialData: null as NowPlayingResponse['nowPlaying'] | null,
-    mapData: (response) => response.nowPlaying,
+    mapData: (response: PlaybackTimelineResponse) => response.current ? {
+      source: 'scheduleBlocks',
+      title: response.current.itemTitle ?? response.current.blockTitle,
+      media: {
+        id: response.current.itemId ?? response.current.blockId,
+        title: response.current.itemTitle ?? response.current.blockTitle,
+        sourceType: 'SCHEDULE',
+        mediaType: 'PROGRAMADO'
+      }
+    } : null,
     fallbackMessage: 'Não foi possível carregar o conteúdo atual.'
   });
 }
 
 export function useUpcomingQueue() {
-  const loader = useCallback((signal: AbortSignal) => api.get<UpNextItem[]>('/public/institutions/irmao-aureo/up-next', { signal }), []);
+  const loader = useCallback((_signal: AbortSignal) => api.getPlaybackTimeline(), []);
 
   return useApiResource(loader, {
     initialData: EMPTY_UPCOMING,
+    mapData: (response: PlaybackTimelineResponse): UpNextItem[] => response.next.map((item) => ({
+      id: item.itemId ?? item.blockId,
+      title: item.itemTitle ?? item.blockTitle,
+      startTime: new Date(item.startsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    })),
     fallbackMessage: 'Não foi possível carregar a fila de próximos conteúdos.'
   });
 }

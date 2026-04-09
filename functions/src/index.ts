@@ -15,6 +15,15 @@ import {
   type TimelineScheduleBlock,
   type TimelineSequenceItem
 } from '../../src/lib/timeline.js';
+import {
+  createScheduleBlock as createScheduleBlockHandler,
+  deleteScheduleBlock as deleteScheduleBlockHandler,
+  getPlaybackTimeline as getPlaybackTimelineHandler,
+  getScheduleDayView as getScheduleDayViewHandler,
+  getScheduleWeekView as getScheduleWeekViewHandler,
+  reorderScheduleBlockItems as reorderScheduleBlockItemsHandler,
+  updateScheduleBlock as updateScheduleBlockHandler
+} from './schedule.js';
 
 initializeApp();
 
@@ -306,6 +315,14 @@ export const getUpNext = onCall(async () => {
 });
 
 export const getDashboardSummary = onCall(async () => getSharedDashboardSummary(timelineAdapter));
+
+export const createScheduleBlock = onCall(createScheduleBlockHandler);
+export const updateScheduleBlock = onCall(updateScheduleBlockHandler);
+export const deleteScheduleBlock = onCall(deleteScheduleBlockHandler);
+export const reorderScheduleBlockItems = onCall(reorderScheduleBlockItemsHandler);
+export const getScheduleDayView = onCall(getScheduleDayViewHandler);
+export const getScheduleWeekView = onCall(getScheduleWeekViewHandler);
+export const getPlaybackTimeline = onCall(getPlaybackTimelineHandler);
 
 
 
