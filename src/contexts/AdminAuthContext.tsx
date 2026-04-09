@@ -2,16 +2,15 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   type User as FirebaseUser
 } from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import type { Institution } from '@/types';
 import type { AdminUserAuthSource, AdminUserRole, LoginLocalRootPayload } from '@/types/admin-user';
-import { auth, configureAuthPersistence, db } from '@/lib/firebase';
-import { loginLocalRoot as loginLocalRootApi, verifyLocalRootSession as verifyLocalRootSessionApi } from '@/lib/adminUsersApi';
+import { fromCanonicalUser, toLegacyAdminUserRole, toLegacyAdminUserStatus } from '@/types/admin-user';
+import { auth, configureAuthPersistence } from '@/lib/firebase';
+import { api } from '@/lib/api';
 import {
   clearLocalRootSession,
   getLocalRootSession,
@@ -20,8 +19,9 @@ import {
 } from '@/lib/localRootSession';
 
 type AdminRole = Exclude<AdminUserRole, 'root'>;
-
-type SessionType = 'firebase' | 'local-root' | null;
+type SessionType = 'LOCAL' | 'GOOGLE' | null;
+type CanonicalRole = 'ROOT' | 'ADMIN' | 'OPERADOR';
+type CanonicalSource = 'LOCAL' | 'GOOGLE';
 
 interface BaseAdminUser {
   id: string;
@@ -43,7 +43,13 @@ interface LocalRootAdminUser extends BaseAdminUser {
   isLocalRoot: true;
 }
 
-type AdminUser = FirebaseAdminUser | LocalRootAdminUser;
+interface LocalAdminUser extends BaseAdminUser {
+  role: AdminRole;
+  authSource: Extract<AdminUserAuthSource, 'local-root'>;
+  isLocalRoot: false;
+}
+
+type AdminUser = FirebaseAdminUser | LocalRootAdminUser | LocalAdminUser;
 
 interface AdminAuthContextValue {
   isAuthenticated: boolean;
@@ -53,8 +59,11 @@ interface AdminAuthContextValue {
   user: AdminUser | null;
   authIssue: AdminAuthIssue | null;
   sessionType: SessionType;
+  userRole: CanonicalRole | null;
+  authSource: CanonicalSource | null;
   isLocalRoot: boolean;
   login: (email: string, password: string, keepConnected: boolean) => Promise<void>;
+  loginLocalUser: (emailOrUsername: string, password: string) => Promise<void>;
   loginWithGoogle: (remember: boolean) => Promise<void>;
   loginLocalRoot: (username: LoginLocalRootPayload['username'], password: LoginLocalRootPayload['password']) => Promise<void>;
   logout: () => Promise<void>;
@@ -82,7 +91,7 @@ const AdminAuthContext = createContext<AdminAuthContextValue | null>(null);
 
 function extractFirebaseErrorCode(error: unknown): string | null {
   if (typeof error === 'object' && error && 'code' in error) {
-    return String(error.code).replace(/^(firestore|auth)\//, '');
+    return String(error.code).replace(/^(functions|firestore|auth)\//, '');
   }
 
   return null;
@@ -120,12 +129,11 @@ function mapAdminAuthIssue(code: string | null): AdminAuthIssue {
   };
 }
 
-function mapEmailLoginError(code: string | null): string {
-  if (code === 'user-not-found') return 'Usuário não encontrado. Verifique o e-mail informado.';
-  if (code === 'wrong-password' || code === 'invalid-credential') return 'E-mail ou senha inválidos. Revise os dados e tente novamente.';
-  if (code === 'invalid-email') return 'E-mail inválido. Verifique o formato informado.';
+function mapLocalLoginError(code: string | null): string {
+  if (code === 'not-found') return 'Usuário não encontrado. Verifique o e-mail/usuário informado.';
+  if (code === 'unauthenticated' || code === 'invalid-credential') return 'E-mail/usuário ou senha inválidos. Revise os dados e tente novamente.';
+  if (code === 'failed-precondition') return 'Sua conta está desativada. Procure um administrador.';
   if (code === 'too-many-requests') return 'Muitas tentativas de login. Tente novamente em alguns minutos.';
-  if (code === 'user-disabled') return 'Sua conta está desativada. Procure um administrador.';
 
   return 'Não foi possível fazer login agora. Tente novamente.';
 }
@@ -152,61 +160,57 @@ function toFirebaseAdminUser(firebaseUser: FirebaseUser, role: AdminRole, profil
   };
 }
 
-function hasValidAdminRole(role: unknown): role is AdminRole {
-  return role === 'admin' || role === 'operador';
-}
-
-async function upsertProfile(firebaseUser: FirebaseUser): Promise<FirebaseAdminUser | null> {
-  const userRef = doc(db, 'users', firebaseUser.uid);
-  const snapshot = await getDoc(userRef);
-
-  const existingData = snapshot.exists() ? snapshot.data() : null;
-  const existingRole = existingData?.role;
-  const role: AdminRole | null = hasValidAdminRole(existingRole) ? existingRole : null;
-  const name = typeof existingData?.name === 'string' ? existingData.name : firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin';
-  const createdAt = snapshot.exists() ? snapshot.data().createdAt ?? serverTimestamp() : serverTimestamp();
-
-  await setDoc(
-    userRef,
-    {
-      id: firebaseUser.uid,
-      name,
-      email: firebaseUser.email ?? '',
-      institution: 'Irmão Áureo',
-      updatedAt: serverTimestamp(),
-      createdAt
-    },
-    { merge: true }
-  );
-
-  if (!role) {
-    throw new AdminPermissionError('Sua conta não possui role administrativa válida no Firestore.');
-  }
-
-  const profile = toFirebaseAdminUser(firebaseUser, role, name);
-
-  return profile;
-}
-
-function localRootUserFromSession(): LocalRootAdminUser | null {
+function localUserFromSession(): AdminUser | null {
   const session = getLocalRootSession();
   if (!isLocalRootSessionValid(session)) return null;
 
-  return {
+  const baseUser = {
     id: session.user.uid,
     name: session.user.nome,
     email: session.user.email,
-    role: 'root' as const,
-    avatarUrl: 'https://i.pravatar.cc/100?u=radioosceia-local-root',
+    avatarUrl: `https://i.pravatar.cc/100?u=${session.user.uid}`,
     institution: 'Irmão Áureo' as Institution,
-    authSource: 'local-root' as const,
-    isLocalRoot: true
+    authSource: 'local-root' as const
   };
+
+  if (session.user.perfil === 'root') {
+    return {
+      ...baseUser,
+      role: 'root',
+      isLocalRoot: true
+    };
+  }
+
+  return {
+    ...baseUser,
+    role: session.user.perfil === 'admin' ? 'admin' : 'operador',
+    isLocalRoot: false
+  };
+}
+
+function resolveIdentity(user: AdminUser | null): { role: CanonicalRole | null; source: CanonicalSource | null } {
+  if (!user) {
+    return { role: null, source: null };
+  }
+
+  const role: CanonicalRole = user.role === 'root' ? 'ROOT' : user.role === 'admin' ? 'ADMIN' : 'OPERADOR';
+  const source: CanonicalSource = user.authSource === 'local-root' ? 'LOCAL' : 'GOOGLE';
+  return { role, source };
+}
+
+function assertActiveUser(status: string | undefined) {
+  if (status === 'INACTIVE') {
+    throw new Error('Sua conta está inativa. Procure um administrador.');
+  }
+}
+
+function assertAllowedGoogleRole(role: string | undefined): role is 'ADMIN' | 'OPERADOR' {
+  return role === 'ADMIN' || role === 'OPERADOR';
 }
 
 export function AdminAuthProvider({ children }: { children: ReactNode }) {
   const [firebaseUserState, setFirebaseUserState] = useState<AdminUser | null>(null);
-  const [localRootUserState, setLocalRootUserState] = useState<AdminUser | null>(() => localRootUserFromSession());
+  const [localRootUserState, setLocalRootUserState] = useState<AdminUser | null>(() => localUserFromSession());
   const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [authIssue, setAuthIssue] = useState<AdminAuthIssue | null>(null);
@@ -217,17 +221,36 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         if (!firebaseUser) {
           setFirebaseUserState(null);
           setIsFirebaseAuthenticated(false);
+          setIsLoading(false);
           return;
         }
 
-      setIsFirebaseAuthenticated(true);
-      const profile = await upsertProfile(firebaseUser);
-      setFirebaseUserState(profile);
-      setAuthIssue(null);
+        const linked = await api.linkGoogleUserOnFirstLogin({
+          firebaseUid: firebaseUser.uid,
+          email: firebaseUser.email ?? '',
+          name: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
+          provider: 'google'
+        });
+
+        assertActiveUser(linked.user.status);
+        if (!assertAllowedGoogleRole(linked.user.role)) {
+          throw new AdminPermissionError('Sua conta não possui role administrativa válida.');
+        }
+
+        const profile = toFirebaseAdminUser(firebaseUser, linked.user.role === 'ADMIN' ? 'admin' : 'operador', linked.user.name);
+        setIsFirebaseAuthenticated(true);
+        setFirebaseUserState(profile);
+        setAuthIssue(null);
       } catch (error) {
         const code = extractFirebaseErrorCode(error);
         setAuthIssue(mapAdminAuthIssue(code));
         setFirebaseUserState(null);
+        setIsFirebaseAuthenticated(false);
+        try {
+          await signOut(auth);
+        } catch {
+          // ignore
+        }
       } finally {
         setIsLoading(false);
       }
@@ -245,58 +268,82 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const isValidOnServer = await verifyLocalRootSessionApi(session.token);
-      if (!isValidOnServer) {
+      const verification = await api.verifyLocalSession({ token: session.token });
+      if (!verification.valid || !verification.user || verification.user.status === 'INACTIVE') {
         clearLocalRootSession();
         setLocalRootUserState(null);
         return;
       }
 
-      setLocalRootUserState(localRootUserFromSession());
+      const user = fromCanonicalUser(verification.user);
+      user.perfil = toLegacyAdminUserRole(verification.user.role);
+      user.status = toLegacyAdminUserStatus(verification.user.status);
+      user.isLocalRoot = verification.user.role === 'ROOT';
+
+      setLocalRootSession({
+        token: session.token,
+        expiresAt: verification.expiresAt ?? session.expiresAt,
+        user
+      });
+      setLocalRootUserState(localUserFromSession());
     };
 
     void hydrateLocalRootSession();
   }, []);
 
   const resolvedUser = localRootUserState ?? firebaseUserState;
-  const sessionType: SessionType = localRootUserState ? 'local-root' : firebaseUserState ? 'firebase' : null;
+  const sessionType: SessionType = localRootUserState ? 'LOCAL' : firebaseUserState ? 'GOOGLE' : null;
+  const resolvedIdentity = resolveIdentity(resolvedUser);
 
-  const value = useMemo<AdminAuthContextValue>(
-    () => ({
+  const value = useMemo<AdminAuthContextValue>(() => {
+    const loginLocalUser = async (emailOrUsername: string, password: string) => {
+      if (!emailOrUsername.trim() || !password.trim()) {
+        throw new Error('Preencha usuário/e-mail e senha para continuar.');
+      }
+
+      setAuthIssue(null);
+      try {
+        const response = await api.loginLocalUser({ emailOrUsername: emailOrUsername.trim(), password });
+        assertActiveUser(response.session.user.status);
+
+        const user = fromCanonicalUser(response.session.user);
+        user.perfil = toLegacyAdminUserRole(response.session.user.role);
+        user.status = toLegacyAdminUserStatus(response.session.user.status);
+        user.isLocalRoot = response.session.user.role === 'ROOT';
+
+        setLocalRootSession({
+          token: response.session.token,
+          expiresAt: response.session.expiresAt,
+          user
+        });
+        setLocalRootUserState(localUserFromSession());
+        setFirebaseUserState(null);
+        setIsFirebaseAuthenticated(false);
+
+        try {
+          await signOut(auth);
+        } catch {
+          // ignore
+        }
+      } catch (error) {
+        const code = extractFirebaseErrorCode(error);
+        throw new Error(mapLocalLoginError(code));
+      }
+    };
+
+    return {
       isAuthenticated: Boolean(resolvedUser),
       isFirebaseAuthenticated,
       isLoading,
       user: resolvedUser,
       sessionType,
-      isLocalRoot: sessionType === 'local-root',
+      userRole: resolvedIdentity.role,
+      authSource: resolvedIdentity.source,
+      isLocalRoot: resolvedIdentity.role === 'ROOT',
       userEmail: resolvedUser?.email ?? null,
       authIssue,
-      login: async (email: string, password: string, remember) => {
-        if (!email.trim() || !password.trim()) {
-          throw new Error('Preencha e-mail e senha para continuar.');
-        }
-
-        await configureAuthPersistence(remember);
-        setAuthIssue(null);
-
-        try {
-          const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-          const profile = await upsertProfile(credential.user);
-          setFirebaseUserState(profile);
-          setIsFirebaseAuthenticated(true);
-          setLocalRootUserState(null);
-          clearLocalRootSession();
-        } catch (error) {
-          const code = extractFirebaseErrorCode(error);
-          if (code === 'permission-denied') {
-            const issue = mapAdminAuthIssue(code);
-            setAuthIssue(issue);
-            throw new Error(issue.message);
-          }
-
-          throw new Error(mapEmailLoginError(code));
-        }
-      },
+      login: async (email: string, password: string) => loginLocalUser(email, password),
+      loginLocalUser,
       loginWithGoogle: async (remember) => {
         await configureAuthPersistence(remember);
         setAuthIssue(null);
@@ -304,7 +351,19 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         try {
           const provider = new GoogleAuthProvider();
           const { user: firebaseUser } = await signInWithPopup(auth, provider);
-          const profile = await upsertProfile(firebaseUser);
+          const linked = await api.linkGoogleUserOnFirstLogin({
+            firebaseUid: firebaseUser.uid,
+            email: firebaseUser.email ?? '',
+            name: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Usuário Admin',
+            provider: 'google'
+          });
+
+          assertActiveUser(linked.user.status);
+          if (!assertAllowedGoogleRole(linked.user.role)) {
+            throw new AdminPermissionError('Sua conta não possui role administrativa válida.');
+          }
+
+          const profile = toFirebaseAdminUser(firebaseUser, linked.user.role === 'ADMIN' ? 'admin' : 'operador', linked.user.name);
           setFirebaseUserState(profile);
           setIsFirebaseAuthenticated(true);
           setLocalRootUserState(null);
@@ -321,16 +380,12 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         }
       },
       loginLocalRoot: async (username: LoginLocalRootPayload['username'], password: LoginLocalRootPayload['password']) => {
-        if (!username.trim() || !password.trim()) {
-          throw new Error('Informe usuário e senha do root local.');
-        }
-
-        const session = await loginLocalRootApi({ username, password });
-        setLocalRootSession(session);
-        setLocalRootUserState(localRootUserFromSession());
-        setAuthIssue(null);
+        await loginLocalUser(username, password);
       },
       logout: async () => {
+        clearLocalRootSession();
+        setLocalRootUserState(null);
+
         try {
           await signOut(auth);
         } catch {
@@ -339,16 +394,13 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
         setFirebaseUserState(null);
         setIsFirebaseAuthenticated(false);
-        setLocalRootUserState(null);
-        clearLocalRootSession();
         setAuthIssue(null);
       },
       clearAuthIssue: () => {
         setAuthIssue(null);
       }
-    }),
-    [authIssue, isFirebaseAuthenticated, isLoading, resolvedUser, sessionType]
-  );
+    };
+  }, [authIssue, isFirebaseAuthenticated, isLoading, resolvedIdentity.role, resolvedIdentity.source, resolvedUser, sessionType]);
 
   return <AdminAuthContext.Provider value={value}>{children}</AdminAuthContext.Provider>;
 }

@@ -10,7 +10,7 @@ export function getLocalRootSession(): LocalRootSession | null {
 
   try {
     const parsed = JSON.parse(raw) as LocalRootSession;
-    if (!parsed?.token || !parsed?.expiresAt || !parsed?.user?.isLocalRoot) {
+    if (!parsed?.token || !parsed?.expiresAt || !parsed?.user?.id) {
       return null;
     }
 

@@ -2,10 +2,10 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 
 export function AdminRouteGuard() {
-  const { isAuthenticated, isLoading, sessionType, isLocalRoot, user } = useAdminAuth();
+  const { isAuthenticated, isLoading, sessionType, isLocalRoot, userRole } = useAdminAuth();
   const location = useLocation();
-  const hasLocalRootAccess = sessionType === 'local-root' || isLocalRoot === true;
-  const hasFirebaseRoleAccess = sessionType === 'firebase' && (user?.role === 'admin' || user?.role === 'operador');
+  const hasLocalRootAccess = sessionType === 'LOCAL' || isLocalRoot === true;
+  const hasFirebaseRoleAccess = sessionType === 'GOOGLE' && (userRole === 'ADMIN' || userRole === 'OPERADOR');
   const isAuthorized = hasLocalRootAccess || hasFirebaseRoleAccess;
 
   if (isLoading) {
@@ -33,9 +33,9 @@ export function AdminRouteGuard() {
 }
 
 export function AdminLoginRedirect() {
-  const { isAuthenticated, isLoading, sessionType, isLocalRoot, user } = useAdminAuth();
-  const hasLocalRootAccess = sessionType === 'local-root' || isLocalRoot === true;
-  const hasFirebaseRoleAccess = sessionType === 'firebase' && (user?.role === 'admin' || user?.role === 'operador');
+  const { isAuthenticated, isLoading, sessionType, isLocalRoot, userRole } = useAdminAuth();
+  const hasLocalRootAccess = sessionType === 'LOCAL' || isLocalRoot === true;
+  const hasFirebaseRoleAccess = sessionType === 'GOOGLE' && (userRole === 'ADMIN' || userRole === 'OPERADOR');
   const isAuthorized = hasLocalRootAccess || hasFirebaseRoleAccess;
 
   if (isLoading) {
