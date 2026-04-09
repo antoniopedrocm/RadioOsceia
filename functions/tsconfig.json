@@ -1,17 +1,16 @@
 {
   "compilerOptions": {
-    "module": "NodeNext",
-    "target": "ES2022",
-    "moduleResolution": "NodeNext",
+    "module": "commonjs",
+    "target": "es2020",
+    "moduleResolution": "node",
     "outDir": "lib",
-    "rootDir": "..",
+    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
   "include": [
-    "src",
-    "../src/lib/timeline.ts"
+    "src"
   ],
   "exclude": [
     "src/seed.ts"
