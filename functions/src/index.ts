@@ -1,4 +1,3 @@
-import { getAuth } from 'firebase-admin/auth';
 import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import bcrypt from 'bcryptjs';
@@ -24,7 +23,7 @@ import {
   updateScheduleBlock as updateScheduleBlockHandler
 } from './schedule.js';
 
-import { db } from './lib/firebaseAdmin.js';
+import { auth, db } from './lib/firebaseAdmin.js';
 
 type AdminRole = 'admin' | 'operador';
 type AdminStatus = 'ativo' | 'inativo';
@@ -820,7 +819,7 @@ export const updateAppUser = onCall(async (request) => {
   });
 
   if (existingUser.firebaseUid) {
-    await getAuth().updateUser(existingUser.firebaseUid, {
+    await auth.updateUser(existingUser.firebaseUid, {
       displayName: name ?? existingUser.name,
       disabled: status === 'INACTIVE'
     });
@@ -858,7 +857,7 @@ export const setAppUserPassword = onCall(async (request) => {
   }
 
   if (user.firebaseUid) {
-    await getAuth().updateUser(user.firebaseUid, { password });
+    await auth.updateUser(user.firebaseUid, { password });
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
@@ -897,7 +896,7 @@ export const deleteAppUser = onCall(async (request) => {
   });
 
   if (user.firebaseUid) {
-    await getAuth().deleteUser(user.firebaseUid).catch(() => null);
+    await auth.deleteUser(user.firebaseUid).catch(() => null);
   }
 
   await userRef.set({
@@ -1117,7 +1116,6 @@ export const linkGoogleUserOnFirstLogin = onCall(async (request) => {
 export const listAdminUsers = onCall(async (request) => {
   await requireAdminOrOperatorOrLocalRoot(request);
 
-  const auth = getAuth();
   const adminProfilesSnapshot = await db.collection('users').where('role', 'in', ['ADMIN', 'OPERADOR', 'admin', 'operador']).get();
   const profileByUid = new Map<string, Record<string, unknown>>(adminProfilesSnapshot.docs.map((docItem) => [docItem.id, docItem.data() as Record<string, unknown>]));
 
@@ -1178,7 +1176,6 @@ export const createAdminUser = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Dados inválidos. Informe nome, e-mail, senha e perfil administrativo.');
   }
 
-  const auth = getAuth();
   const createdUser = await auth.createUser({
     email: data.email.trim().toLowerCase(),
     password: data.senha,
@@ -1242,7 +1239,6 @@ export const updateAdminUser = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Nome e perfil administrativo válidos são obrigatórios.');
   }
 
-  const auth = getAuth();
   const targetUid = data.uid.trim();
   const targetUser = await auth.getUser(targetUid);
   const targetSnapshot = await db.collection('users').doc(targetUid).get();
@@ -1340,7 +1336,6 @@ export const setAdminUserStatus = onCall(async (request) => {
     currentStatus: targetStatus
   });
 
-  const auth = getAuth();
   await auth.updateUser(targetUid, { disabled: status === 'inativo' });
   await targetRef.set({
     status: toCanonicalStatus(status),
@@ -1386,7 +1381,6 @@ export const deleteAdminUser = onCall(async (request) => {
     }
   }
 
-  const auth = getAuth();
   await auth.deleteUser(data.uid.trim());
   await targetRef.set({
     deleted: true,
@@ -1505,8 +1499,6 @@ export const bootstrapRootAdmin = onCall(async () => {
 });
 
 export const bootstrapSeedData = onCall(async () => {
-  const auth = getAuth();
-
   await db.collection('settings').doc('app').set({
     institutionName: 'Irmão Áureo',
     logo: '',
