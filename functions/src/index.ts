@@ -480,6 +480,19 @@ function getLocalRootConfig() {
   };
 }
 
+function getLocalAuthConfig() {
+  const ttlMinutesRaw = Number(process.env.LOCAL_SESSION_TTL_MINUTES);
+  const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw >= 5 && ttlMinutesRaw <= 24 * 60
+    ? Math.floor(ttlMinutesRaw)
+    : 8 * 60;
+
+  return {
+    enabled: process.env.LOCAL_AUTH_ENABLED === 'true',
+    sessionSecret: process.env.LOCAL_SESSION_SECRET?.trim() ?? '',
+    sessionTtlMinutes: ttlMinutes
+  };
+}
+
 function toBase64Url(input: Buffer | string) {
   return Buffer.from(input).toString('base64url');
 }
@@ -901,27 +914,50 @@ export const deleteAppUser = onCall(async (request) => {
 });
 
 export const loginLocalUser = onCall(async (request) => {
-  const payload = ensureObject(request.data, 'Payload inválido para login local.');
-  const email = ensureEmail(payload.email);
-  const password = ensurePassword(payload.password);
-  const secret = process.env.LOCAL_ROOT_SESSION_SECRET?.trim() ?? '';
-  if (!secret) {
+  const cfg = getLocalAuthConfig();
+  if (!cfg.enabled) {
+    throw new HttpsError('failed-precondition', 'Autenticação local desabilitada.');
+  }
+
+  if (!cfg.sessionSecret) {
     throw new HttpsError('failed-precondition', 'Segredo de sessão local não configurado.');
   }
 
-  const userSnapshot = await db.collection('users')
-    .where('email', '==', email)
-    .where('authSource', '==', 'LOCAL')
-    .limit(1)
-    .get();
+  const payload = ensureObject(request.data, 'Payload inválido para login local.');
+  const emailOrUsername = ensureTrimmedString(payload.emailOrUsername, 'emailOrUsername', { minLength: 3, maxLength: 320 });
+  const password = ensureTrimmedString(payload.password, 'password', { minLength: 1, maxLength: 128 });
+  if (!emailOrUsername || !password) {
+    throw new HttpsError('invalid-argument', 'Credenciais inválidas.');
+  }
 
-  const userDoc = userSnapshot.docs[0];
+  const normalizedIdentifier = emailOrUsername.toLowerCase();
+  const emailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOrUsername);
+
+  const candidateSnapshots = [];
+  if (emailLike) {
+    const normalizedEmail = ensureEmail(emailOrUsername, 'emailOrUsername');
+    candidateSnapshots.push(await db.collection('users')
+      .where('email', '==', normalizedEmail)
+      .where('authSource', '==', 'LOCAL')
+      .limit(1)
+      .get());
+  }
+
+  if (!emailLike || candidateSnapshots[0]?.empty) {
+    candidateSnapshots.push(await db.collection('users')
+      .where('username', '==', normalizedIdentifier)
+      .where('authSource', '==', 'LOCAL')
+      .limit(1)
+      .get());
+  }
+
+  const userDoc = candidateSnapshots.flatMap((snapshot) => snapshot.docs)[0];
   if (!userDoc) {
     throw new HttpsError('permission-denied', 'Credenciais inválidas.');
   }
 
   const user = toCanonicalUserFromDoc(userDoc.id, userDoc.data() as Record<string, unknown>);
-  if (user.status !== 'ACTIVE') {
+  if (user.status === 'INACTIVE') {
     throw new HttpsError('permission-denied', 'Conta inativa.');
   }
 
@@ -932,17 +968,17 @@ export const loginLocalUser = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'Credenciais inválidas.');
   }
 
-  const ttlMinutes = Number(process.env.LOCAL_ROOT_SESSION_TTL_MINUTES ?? '480');
-  const ttlSeconds = Math.max(5, ttlMinutes) * 60;
+  const ttlSeconds = cfg.sessionTtlMinutes * 60;
   const nowSeconds = Math.floor(Date.now() / 1000);
+  const exp = nowSeconds + ttlSeconds;
   const token = signLocalUserToken({
     sub: 'local-app-user',
     uid: user.id,
     role: user.role,
     authSource: 'LOCAL',
     email: user.email,
-    exp: nowSeconds + ttlSeconds
-  }, secret);
+    exp
+  }, cfg.sessionSecret);
 
   await userDoc.ref.set({
     lastLoginAt: FieldValue.serverTimestamp(),
@@ -953,7 +989,7 @@ export const loginLocalUser = onCall(async (request) => {
     ok: true,
     session: {
       token,
-      expiresAt: new Date((nowSeconds + ttlSeconds) * 1000).toISOString(),
+      expiresAt: new Date(exp * 1000).toISOString(),
       user: {
         ...user,
         lastLoginAt: new Date().toISOString()
@@ -963,21 +999,28 @@ export const loginLocalUser = onCall(async (request) => {
 });
 
 export const verifyLocalSession = onCall(async (request) => {
+  const cfg = getLocalAuthConfig();
+  if (!cfg.enabled || !cfg.sessionSecret) {
+    return { valid: false };
+  }
+
   const payload = ensureObject(request.data, 'Payload inválido para validação de sessão.');
   const token = ensureTrimmedString(payload.token, 'token');
   if (!token) return { valid: false };
 
-  const secret = process.env.LOCAL_ROOT_SESSION_SECRET?.trim() ?? '';
-  if (!secret) return { valid: false };
-  const parsed = verifyLocalUserToken(token, secret);
+  const parsed = verifyLocalUserToken(token, cfg.sessionSecret);
   if (!parsed) return { valid: false };
 
   const userDoc = await db.collection('users').doc(parsed.uid).get();
   if (!userDoc.exists) return { valid: false };
   const user = toCanonicalUserFromDoc(userDoc.id, userDoc.data() as Record<string, unknown>);
-  if (user.status !== 'ACTIVE') return { valid: false };
+  if (user.status !== 'ACTIVE' || user.authSource !== 'LOCAL') return { valid: false };
 
-  return { valid: true, user };
+  return {
+    valid: true,
+    expiresAt: new Date(parsed.exp * 1000).toISOString(),
+    user
+  };
 });
 
 export const linkGoogleUserOnFirstLogin = onCall(async (request) => {
