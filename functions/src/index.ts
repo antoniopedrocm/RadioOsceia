@@ -835,6 +835,86 @@ export const verifyLocalRootSession = onCall(async (request) => {
   return { valid: true, user: buildLocalRootUser() };
 });
 
+
+export const bootstrapRootAdmin = onCall(async () => {
+  const username = process.env.ROOT_ADMIN_USERNAME?.trim() ?? '';
+  const email = process.env.ROOT_ADMIN_EMAIL?.trim().toLowerCase() ?? '';
+  const passwordHash = process.env.ROOT_ADMIN_PASSWORD_HASH?.trim() ?? '';
+
+  const missing: string[] = [];
+  if (!username) missing.push('ROOT_ADMIN_USERNAME');
+  if (!email) missing.push('ROOT_ADMIN_EMAIL');
+  if (!passwordHash) missing.push('ROOT_ADMIN_PASSWORD_HASH');
+
+  if (missing.length > 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Configuração ausente para bootstrap root admin: ${missing.join(', ')}`
+    );
+  }
+
+  const existingRootSnapshot = await db.collection('users')
+    .where('role', '==', 'ROOT')
+    .where('authSource', '==', 'LOCAL')
+    .where('isProtected', '==', true)
+    .limit(1)
+    .get();
+
+  const existingRoot = existingRootSnapshot.docs[0];
+  if (existingRoot) {
+    const existingData = existingRoot.data();
+    return {
+      ok: true,
+      created: false,
+      user: {
+        id: existingRoot.id,
+        name: String(existingData.name ?? username),
+        email: String(existingData.email ?? email),
+        role: 'ROOT' as const,
+        authSource: 'LOCAL' as const,
+        status: String(existingData.status ?? 'ACTIVE'),
+        isActive: Boolean(existingData.isActive ?? true),
+        isProtected: true,
+        provider: String(existingData.provider ?? 'local')
+      }
+    };
+  }
+
+  const rootRef = db.collection('users').doc();
+  await rootRef.set({
+    id: rootRef.id,
+    name: username,
+    email,
+    authSource: 'LOCAL',
+    role: 'ROOT',
+    status: 'ACTIVE',
+    isActive: true,
+    isProtected: true,
+    provider: 'local',
+    passwordHash,
+    firebaseUid: null,
+    lastLoginAt: null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return {
+    ok: true,
+    created: true,
+    user: {
+      id: rootRef.id,
+      name: username,
+      email,
+      role: 'ROOT' as const,
+      authSource: 'LOCAL' as const,
+      status: 'ACTIVE' as const,
+      isActive: true,
+      isProtected: true,
+      provider: 'local'
+    }
+  };
+});
+
 export const bootstrapSeedData = onCall(async () => {
   const auth = getAuth();
 
