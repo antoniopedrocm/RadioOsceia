@@ -1025,71 +1025,95 @@ export const verifyLocalSession = onCall(async (request) => {
 
 export const linkGoogleUserOnFirstLogin = onCall(async (request) => {
   const uid = requireAuth(request.auth);
-  const authUser = await getAuth().getUser(uid);
-  const email = (authUser.email ?? '').trim().toLowerCase();
-  if (!email) {
-    throw new HttpsError('failed-precondition', 'Usuário autenticado sem e-mail.');
+  const payload = ensureObject(request.data, 'Payload inválido para vínculo Google no primeiro login.');
+  const firebaseUid = ensureTrimmedString(payload.firebaseUid, 'firebaseUid');
+  const email = ensureEmail(payload.email);
+  const name = ensureTrimmedString(payload.name, 'name', { minLength: 2, maxLength: 160 });
+  const provider = ensureTrimmedString(payload.provider, 'provider');
+
+  if (!firebaseUid || !name || provider !== 'google') {
+    throw new HttpsError('invalid-argument', 'Payload inválido. Use { firebaseUid, email, name, provider: "google" }.');
   }
 
-  const isGoogleAccount = authUser.providerData.some((provider) => provider.providerId === 'google.com');
-  if (!isGoogleAccount) {
-    throw new HttpsError('failed-precondition', 'Operação válida apenas para login Google.');
+  if (uid !== firebaseUid) {
+    throw new HttpsError('permission-denied', 'firebaseUid divergente do usuário autenticado.');
   }
 
-  const userRef = db.collection('users').doc(uid);
-  const existingByUid = await userRef.get();
-  if (existingByUid.exists) {
-    await userRef.set({
-      email,
-      authSource: 'GOOGLE',
-      provider: 'google',
-      firebaseUid: uid,
-      lastLoginAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    const linked = await userRef.get();
-    return { ok: true, linked: false, user: toCanonicalUserFromDoc(uid, linked.data() as Record<string, unknown>) };
-  }
+  let targetDocId = firebaseUid;
+  let linked = false;
+  let created = false;
 
-  const byEmailSnapshot = await db.collection('users')
+  const pendingGoogleUsers = await db.collection('users')
+    .where('authSource', '==', 'GOOGLE')
     .where('email', '==', email)
+    .where('firebaseUid', '==', null)
     .limit(1)
     .get();
 
-  const existingByEmail = byEmailSnapshot.docs[0];
-  const baseRole = normalizeCanonicalRole(existingByEmail?.data()?.role) ?? 'OPERADOR';
-  const baseStatus = normalizeCanonicalStatus(existingByEmail?.data()?.status);
-  const baseProtected = Boolean(existingByEmail?.data()?.isProtected ?? false);
-  const baseCreatedAt = existingByEmail?.data()?.createdAt ?? FieldValue.serverTimestamp();
-
-  if (existingByEmail && existingByEmail.id !== uid) {
-    await existingByEmail.ref.set({
-      firebaseUid: uid,
-      authSource: 'GOOGLE',
+  const pendingGoogleUser = pendingGoogleUsers.docs[0];
+  if (pendingGoogleUser) {
+    targetDocId = pendingGoogleUser.id;
+    linked = true;
+    await pendingGoogleUser.ref.set({
+      email,
+      name,
       provider: 'google',
+      firebaseUid,
       lastLoginAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
+  } else {
+    const existingByUidRef = db.collection('users').doc(firebaseUid);
+    const existingByUid = await existingByUidRef.get();
+    if (existingByUid.exists) {
+      await existingByUidRef.set({
+        email,
+        name,
+        authSource: 'GOOGLE',
+        provider: 'google',
+        firebaseUid,
+        lastLoginAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    } else {
+      // Estratégia adotada quando não há cadastro pendente:
+      // cria automaticamente um usuário canônico Google com perfil OPERADOR ativo.
+      created = true;
+      await existingByUidRef.set({
+        id: firebaseUid,
+        email,
+        name,
+        role: 'OPERADOR',
+        status: 'ACTIVE',
+        authSource: 'GOOGLE',
+        provider: 'google',
+        isActive: true,
+        isProtected: false,
+        firebaseUid,
+        lastLoginAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
   }
 
-  await userRef.set({
-    id: uid,
-    email,
-    name: authUser.displayName ?? email.split('@')[0],
-    role: baseRole,
-    status: baseStatus,
-    authSource: 'GOOGLE',
-    provider: 'google',
-    isActive: baseStatus === 'ACTIVE',
-    isProtected: baseProtected,
-    firebaseUid: uid,
-    lastLoginAt: FieldValue.serverTimestamp(),
-    createdAt: baseCreatedAt,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  const resolvedDoc = await db.collection('users').doc(targetDocId).get();
+  if (!resolvedDoc.exists) {
+    throw new HttpsError('not-found', 'Não foi possível resolver o cadastro canônico do usuário Google.');
+  }
 
-  const linkedDoc = await userRef.get();
-  return { ok: true, linked: true, user: toCanonicalUserFromDoc(uid, linkedDoc.data() as Record<string, unknown>) };
+  const canonicalUser = toCanonicalUserFromDoc(resolvedDoc.id, resolvedDoc.data() as Record<string, unknown>);
+  if (canonicalUser.status === 'INACTIVE') {
+    throw new HttpsError('permission-denied', 'Acesso bloqueado: usuário inativo.');
+  }
+
+  return {
+    ok: true,
+    linked,
+    created,
+    strategy: created ? 'create_default_google_operador_active' : 'link_existing_or_reuse',
+    user: canonicalUser
+  };
 });
 
 export const listAdminUsers = onCall(async (request) => {
