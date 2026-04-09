@@ -1,6 +1,5 @@
-import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import bcrypt from 'bcryptjs';
 import * as crypto from 'node:crypto';
@@ -25,9 +24,8 @@ import {
   updateScheduleBlock as updateScheduleBlockHandler
 } from './schedule.js';
 
-initializeApp();
+import { db } from './lib/firebaseAdmin.js';
 
-const db = getFirestore();
 type AdminRole = 'admin' | 'operador';
 type AdminStatus = 'ativo' | 'inativo';
 type LegacyAuthSource = 'firebase' | 'local-root';
