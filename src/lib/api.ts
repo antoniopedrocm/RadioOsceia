@@ -26,6 +26,8 @@ import type {
   UpdateScheduleBlockPayload
 } from '@/types/schedule';
 import { parseYoutubeUrl } from '@/lib/youtube';
+import { getLocalRootSession } from '@/lib/localRootSession';
+import type { CanonicalUser } from '@/types/canonical-user';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
   getDashboardSummary as getSharedDashboardSummary,
@@ -179,6 +181,87 @@ function normalizeApiError(error: unknown): ApiError {
 export function getApiErrorMessage(error: unknown, fallback = 'Não foi possível carregar os dados.') {
   const apiError = error instanceof ApiError ? error : normalizeApiError(error);
   return apiError.message || fallback;
+}
+
+function withLocalRootAuth<T extends object>(payload?: T): Record<string, unknown> {
+  const session = getLocalRootSession();
+  return {
+    ...((payload ?? {}) as Record<string, unknown>),
+    localRootToken: session?.token ?? null
+  };
+}
+
+export interface LocalUserSession {
+  token: string;
+  expiresAt: string;
+  user: CanonicalUser;
+}
+
+export interface LoginLocalUserPayload {
+  emailOrUsername: string;
+  password: string;
+}
+
+export interface VerifyLocalSessionPayload {
+  token: string;
+}
+
+export interface VerifyLocalSessionResponse {
+  valid: boolean;
+  expiresAt?: string;
+  user?: CanonicalUser;
+}
+
+export interface BootstrapRootAdminResponse {
+  ok: true;
+  created: boolean;
+  user: CanonicalUser;
+}
+
+export interface ListAppUsersResponse {
+  users: CanonicalUser[];
+}
+
+export interface CreateAppUserPayload {
+  name: string;
+  email: string;
+  role: CanonicalUser['role'];
+  status?: CanonicalUser['status'];
+  authSource?: CanonicalUser['authSource'];
+  institution?: string;
+  password?: string;
+}
+
+export interface UpdateAppUserPayload {
+  uid: string;
+  name?: string;
+  role?: CanonicalUser['role'];
+  status?: CanonicalUser['status'];
+  institution?: string;
+}
+
+export interface SetAppUserPasswordPayload {
+  uid: string;
+  password: string;
+}
+
+export interface DeleteAppUserPayload {
+  uid: string;
+}
+
+export interface LinkGoogleUserOnFirstLoginPayload {
+  firebaseUid: string;
+  email: string;
+  name: string;
+  provider: 'google';
+}
+
+export interface LinkGoogleUserOnFirstLoginResponse {
+  ok: true;
+  linked: boolean;
+  created: boolean;
+  strategy: string;
+  user: CanonicalUser;
 }
 
 async function withTimeout<T>(promise: Promise<T>) {
@@ -859,6 +942,87 @@ export const api = {
     const callable = httpsCallable<{ now?: string | null }, PlaybackTimelineResponse>(functions, 'getPlaybackTimeline');
     const response = await callable(payload ?? {});
     return response.data;
+  },
+  async bootstrapRootAdmin() {
+    try {
+      const callable = httpsCallable<Record<string, never>, BootstrapRootAdminResponse>(functions, 'bootstrapRootAdmin');
+      const response = await callable({});
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async listAppUsers() {
+    try {
+      const callable = httpsCallable<Record<string, unknown>, ListAppUsersResponse>(functions, 'listAppUsers');
+      const response = await callable(withLocalRootAuth());
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async createAppUser(payload: CreateAppUserPayload) {
+    try {
+      const callable = httpsCallable<Record<string, unknown>, { ok: true; user: CanonicalUser }>(functions, 'createAppUser');
+      const response = await callable(withLocalRootAuth(payload));
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async updateAppUser(payload: UpdateAppUserPayload) {
+    try {
+      const callable = httpsCallable<Record<string, unknown>, { ok: true; user: CanonicalUser }>(functions, 'updateAppUser');
+      const response = await callable(withLocalRootAuth(payload));
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async setAppUserPassword(payload: SetAppUserPasswordPayload) {
+    try {
+      const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'setAppUserPassword');
+      const response = await callable(withLocalRootAuth(payload));
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async deleteAppUser(payload: DeleteAppUserPayload) {
+    try {
+      const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'deleteAppUser');
+      const response = await callable(withLocalRootAuth(payload));
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async loginLocalUser(payload: LoginLocalUserPayload) {
+    try {
+      const callable = httpsCallable<LoginLocalUserPayload, { ok: true; session: LocalUserSession }>(functions, 'loginLocalUser');
+      const response = await callable(payload);
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async verifyLocalSession(payload: VerifyLocalSessionPayload) {
+    try {
+      const callable = httpsCallable<VerifyLocalSessionPayload, VerifyLocalSessionResponse>(functions, 'verifyLocalSession');
+      const response = await callable(payload);
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+  async linkGoogleUserOnFirstLogin(payload: LinkGoogleUserOnFirstLoginPayload) {
+    try {
+      const callable = httpsCallable<LinkGoogleUserOnFirstLoginPayload, LinkGoogleUserOnFirstLoginResponse>(functions, 'linkGoogleUserOnFirstLogin');
+      const response = await callable(payload);
+      return response.data;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
   }
 };
 

@@ -1,6 +1,9 @@
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '@/lib/firebase';
-import { getLocalRootSession } from '@/lib/localRootSession';
+import {
+  api,
+  getApiErrorMessage,
+  type CreateAppUserPayload,
+  type UpdateAppUserPayload
+} from '@/lib/api';
 import type {
   AdminUserRecord,
   CreateAdminUserPayload,
@@ -10,115 +13,108 @@ import type {
   SetAdminUserStatusPayload,
   UpdateAdminUserPayload
 } from '@/types/admin-user';
+import { fromCanonicalUser, toLegacyAdminUserRole, toLegacyAdminUserStatus } from '@/types/admin-user';
 
-interface ListAdminUsersData {
-  users: AdminUserRecord[];
+function normalizeAdminUsersError(error: unknown, fallback: string): Error {
+  return new Error(getApiErrorMessage(error, fallback));
 }
 
-interface VerifyLocalRootSessionPayload {
-  token: string;
-}
-
-function getCallableErrorMessage(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
-    return String((error as { message: string }).message);
-  }
-
-  return fallback;
-}
-
-function assertFunctionsAvailable() {
-  if (!functions) {
-    throw new Error('Firebase Functions não está disponível neste ambiente.');
-  }
-}
-
-function withLocalRootAuth<T extends object>(payload?: T): Record<string, unknown> {
-  const session = getLocalRootSession();
+function toCanonicalCreatePayload(payload: CreateAdminUserPayload): CreateAppUserPayload {
   return {
-    ...((payload ?? {}) as Record<string, unknown>),
-    localRootToken: session?.token ?? null
+    name: payload.nome,
+    email: payload.email,
+    password: payload.senha,
+    role: payload.perfil === 'admin' ? 'ADMIN' : 'OPERADOR',
+    status: payload.status === 'inativo' ? 'INACTIVE' : 'ACTIVE',
+    authSource: 'LOCAL'
+  };
+}
+
+function toCanonicalUpdatePayload(payload: UpdateAdminUserPayload): UpdateAppUserPayload {
+  return {
+    uid: payload.uid,
+    name: payload.nome,
+    role: payload.perfil === 'admin' ? 'ADMIN' : 'OPERADOR',
+    status: payload.status === 'inativo' ? 'INACTIVE' : 'ACTIVE'
   };
 }
 
 export async function listAdminUsers(): Promise<AdminUserRecord[]> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, ListAdminUsersData>(functions, 'listAdminUsers');
-
   try {
-    const response = await callable(withLocalRootAuth());
-    return response.data.users;
+    const response = await api.listAppUsers();
+    return response.users.map(fromCanonicalUser);
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível carregar usuários administrativos.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível carregar usuários administrativos.');
   }
 }
 
 export async function createAdminUser(payload: CreateAdminUserPayload): Promise<AdminUserRecord> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUserRecord }>(functions, 'createAdminUser');
-
   try {
-    const response = await callable(withLocalRootAuth(payload));
-    return response.data.user;
+    const response = await api.createAppUser(toCanonicalCreatePayload(payload));
+    return fromCanonicalUser(response.user);
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível criar usuário administrativo.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível criar usuário administrativo.');
   }
 }
 
 export async function updateAdminUser(payload: UpdateAdminUserPayload): Promise<AdminUserRecord> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true; user: AdminUserRecord }>(functions, 'updateAdminUser');
-
   try {
-    const response = await callable(withLocalRootAuth(payload));
-    return response.data.user;
+    const response = await api.updateAppUser(toCanonicalUpdatePayload(payload));
+    if (payload.senha?.trim()) {
+      await api.setAppUserPassword({ uid: payload.uid, password: payload.senha.trim() });
+      const refreshed = await api.listAppUsers();
+      const refreshedUser = refreshed.users.find((user) => user.id === payload.uid || user.firebaseUid === payload.uid);
+      return refreshedUser ? fromCanonicalUser(refreshedUser) : fromCanonicalUser(response.user);
+    }
+
+    return fromCanonicalUser(response.user);
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível atualizar usuário administrativo.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível atualizar usuário administrativo.');
   }
 }
 
 export async function deleteAdminUser(payload: DeleteAdminUserPayload): Promise<void> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'deleteAdminUser');
-
   try {
-    await callable(withLocalRootAuth(payload));
+    await api.deleteAppUser(payload);
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível excluir usuário administrativo.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível excluir usuário administrativo.');
   }
 }
 
 export async function setAdminUserStatus(payload: SetAdminUserStatusPayload): Promise<void> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<Record<string, unknown>, { ok: true }>(functions, 'setAdminUserStatus');
-
   try {
-    await callable(withLocalRootAuth(payload));
+    await api.updateAppUser({
+      uid: payload.uid,
+      status: payload.status === 'inativo' ? 'INACTIVE' : 'ACTIVE'
+    });
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível alterar status do usuário.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível alterar status do usuário.');
   }
 }
 
 export async function loginLocalRoot(payload: LoginLocalRootPayload): Promise<LocalRootSession> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<LoginLocalRootPayload, { ok: true; session: LocalRootSession }>(functions, 'loginLocalRoot');
-
   try {
-    const response = await callable(payload);
-    return response.data.session;
+    const response = await api.loginLocalUser({ emailOrUsername: payload.username, password: payload.password });
+    const user = fromCanonicalUser(response.session.user);
+    user.perfil = toLegacyAdminUserRole(response.session.user.role);
+    user.status = toLegacyAdminUserStatus(response.session.user.status);
+    user.isLocalRoot = response.session.user.role === 'ROOT';
+    return {
+      token: response.session.token,
+      expiresAt: response.session.expiresAt,
+      user
+    };
   } catch (error) {
-    throw new Error(getCallableErrorMessage(error, 'Não foi possível autenticar o root local.'));
+    throw normalizeAdminUsersError(error, 'Não foi possível autenticar o usuário local.');
   }
 }
 
 export async function verifyLocalRootSession(token: string): Promise<boolean> {
-  assertFunctionsAvailable();
-  const callable = httpsCallable<VerifyLocalRootSessionPayload, { valid: boolean }>(functions, 'verifyLocalRootSession');
-
   try {
-    const response = await callable({ token });
-    return response.data.valid === true;
-  } catch {
+    const response = await api.verifyLocalSession({ token });
+    return response.valid === true;
+  } catch (error) {
+    void error;
     return false;
   }
 }
