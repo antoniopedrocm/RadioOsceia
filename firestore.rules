@@ -17,22 +17,58 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    function hasPrivilegedTokenClaim() {
+      return isSignedIn() && (
+        request.auth.token.role in ['ROOT', 'ADMIN', 'root', 'admin']
+        || request.auth.token.admin == true
+      );
+    }
+
+    function isAdminOrRoot() {
+      return hasPrivilegedTokenClaim() || isAdmin();
+    }
+
+    function onlyAllowedSelfEditableUserFields() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        'name',
+        'nome',
+        'email',
+        'avatarUrl',
+        'photoURL',
+        'updatedAt',
+        'lastLoginAt'
+      ]);
+    }
+
     match /settings/{docId} {
       allow read: if true;
       allow write: if isAdminOrOperator();
     }
 
     match /users/{uid} {
-      allow read: if isOwner(uid) || isAdminOrOperator();
+      allow read: if isOwner(uid) || isAdminOrRoot() || isAdminOrOperator();
       allow create: if isOwner(uid)
         && request.resource.data.id == uid
-        && request.resource.data.role == 'operador';
-      allow update: if (isOwner(uid)
+        && !request.resource.data.keys().hasAny([
+          'role',
+          'authSource',
+          'passwordHash',
+          'isProtected',
+          'firebaseUid',
+          'status'
+        ]);
+      allow update: if isOwner(uid)
         && request.resource.data.id == resource.data.id
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.institution == resource.data.institution)
-        || isAdmin();
-      allow delete: if isAdmin();
+        && onlyAllowedSelfEditableUserFields()
+        && !request.resource.data.diff(resource.data).changedKeys().hasAny([
+          'role',
+          'authSource',
+          'passwordHash',
+          'isProtected',
+          'firebaseUid',
+          'status'
+        ]);
+      allow delete: if false;
     }
 
     match /programs/{docId} {
