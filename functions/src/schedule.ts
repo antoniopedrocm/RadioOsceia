@@ -1,7 +1,13 @@
 import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
+import * as admin from 'firebase-admin';
 
-import { db } from './lib/firebaseAdmin';
+function getDb() {
+  if (admin.apps.length === 0) {
+    admin.initializeApp();
+  }
+  return admin.firestore();
+}
 
 export type ScheduleBlockStatus = 'ACTIVE' | 'INACTIVE' | 'CANCELLED';
 export type ScheduleRecurrenceType = 'NONE' | 'DAILY' | 'WEEKLY';
@@ -48,7 +54,7 @@ function requireAuth(auth: { uid: string } | null | undefined) {
 }
 
 async function requireAdminOrOperator(uid: string) {
-  const userDoc = await db.collection('users').doc(uid).get();
+  const userDoc = await getDb().collection('users').doc(uid).get();
   const role = String(userDoc.data()?.role ?? 'operador');
   if (!['admin', 'operador'].includes(role)) {
     throw new HttpsError('permission-denied', 'Perfil sem permissão para esta operação.');
@@ -158,7 +164,7 @@ function buildRecurrenceDates(date: string, recurrenceType: ScheduleRecurrenceTy
 
 async function resolveProgramTitle(programId?: string | null) {
   if (!programId) return null;
-  const snapshot = await db.collection('programs').doc(programId).get();
+  const snapshot = await getDb().collection('programs').doc(programId).get();
   if (!snapshot.exists) return null;
   return String(snapshot.data()?.title ?? '').trim() || null;
 }
@@ -168,7 +174,7 @@ async function resolveMediaMaps(items: ScheduleItemInput[]) {
   const mediaMap = new Map<string, { title: string | null; sourceType: string | null; mediaType: string | null }>();
 
   await Promise.all(ids.map(async (id) => {
-    const mediaDoc = await db.collection('media').doc(id).get();
+    const mediaDoc = await getDb().collection('media').doc(id).get();
     if (!mediaDoc.exists) return;
     const data = mediaDoc.data() ?? {};
     mediaMap.set(id, {
@@ -213,7 +219,7 @@ async function validateNoConflicts(dates: string[], startTime: string, endTime: 
     const targetStart = combineDateAndTimeToDate(date, startTime);
     const targetEnd = combineDateAndTimeToDate(date, endTime);
 
-    const daySnapshot = await db.collection('scheduleBlocks').where('date', '==', date).get();
+    const daySnapshot = await getDb().collection('scheduleBlocks').where('date', '==', date).get();
     const existing = daySnapshot.docs.map((doc) => {
       const data = doc.data() ?? {};
       return {
@@ -247,7 +253,7 @@ function validateScheduleBlockPayload(payload: ScheduleBlockInput) {
 
 async function writeItems(blockRef: DocumentReference, items: ScheduleItemInput[], mediaMap: Map<string, { title: string | null; sourceType: string | null; mediaType: string | null }>) {
   const snapshot = await blockRef.collection('items').get();
-  const batch = db.batch();
+  const batch = getDb().batch();
   snapshot.docs.forEach((doc) => batch.delete(doc.ref));
 
   items
@@ -298,7 +304,7 @@ export const createScheduleBlock = async (request: CallableRequest<unknown>) => 
 
   await validateNoConflicts(dates, data.startTime, data.endTime);
 
-  const recurrenceGroupId = recurrenceType === 'NONE' ? null : db.collection('_').doc().id;
+  const recurrenceGroupId = recurrenceType === 'NONE' ? null : getDb().collection('_').doc().id;
   const programTitle = await resolveProgramTitle(data.programId ?? null);
   const mediaMap = await resolveMediaMaps(items);
 
@@ -307,7 +313,7 @@ export const createScheduleBlock = async (request: CallableRequest<unknown>) => 
     const startsAt = combineDateAndTimeToDate(date, data.startTime);
     const endsAt = combineDateAndTimeToDate(date, data.endTime);
 
-    const blockRef = db.collection('scheduleBlocks').doc();
+    const blockRef = getDb().collection('scheduleBlocks').doc();
     await blockRef.set({
       title: data.title.trim(),
       description: data.description ? String(data.description).trim() : null,
@@ -353,7 +359,7 @@ export const updateScheduleBlock = async (request: CallableRequest<unknown>) => 
   const items = normalizeItems(data.items, true);
   const status = normalizeScheduleStatus(data.status);
 
-  const baseRef = db.collection('scheduleBlocks').doc(data.blockId);
+  const baseRef = getDb().collection('scheduleBlocks').doc(data.blockId);
   const baseDoc = await baseRef.get();
   if (!baseDoc.exists) {
     throw new HttpsError('not-found', 'Bloco não encontrado.');
@@ -365,7 +371,7 @@ export const updateScheduleBlock = async (request: CallableRequest<unknown>) => 
 
   let groupDocs: DocumentSnapshot[] = [baseDoc];
   if (groupId && scope !== 'THIS') {
-    const snapshot = await db.collection('scheduleBlocks').where('recurrenceGroupId', '==', groupId).get();
+    const snapshot = await getDb().collection('scheduleBlocks').where('recurrenceGroupId', '==', groupId).get();
     groupDocs = snapshot.docs;
   }
 
@@ -424,7 +430,7 @@ export const deleteScheduleBlock = async (request: CallableRequest<unknown>) => 
     throw new HttpsError('invalid-argument', 'blockId é obrigatório.');
   }
 
-  const baseRef = db.collection('scheduleBlocks').doc(data.blockId);
+  const baseRef = getDb().collection('scheduleBlocks').doc(data.blockId);
   const baseDoc = await baseRef.get();
   if (!baseDoc.exists) {
     throw new HttpsError('not-found', 'Bloco não encontrado.');
@@ -436,7 +442,7 @@ export const deleteScheduleBlock = async (request: CallableRequest<unknown>) => 
 
   let groupDocs: DocumentSnapshot[] = [baseDoc];
   if (groupId && scope !== 'THIS') {
-    const snapshot = await db.collection('scheduleBlocks').where('recurrenceGroupId', '==', groupId).get();
+    const snapshot = await getDb().collection('scheduleBlocks').where('recurrenceGroupId', '==', groupId).get();
     groupDocs = snapshot.docs;
   }
 
@@ -444,7 +450,7 @@ export const deleteScheduleBlock = async (request: CallableRequest<unknown>) => 
 
   for (const doc of targetDocs) {
     const itemsSnapshot = await doc.ref.collection('items').get();
-    const batch = db.batch();
+    const batch = getDb().batch();
     itemsSnapshot.docs.forEach((item) => batch.delete(item.ref));
     batch.delete(doc.ref);
     await batch.commit();
@@ -468,9 +474,9 @@ export const reorderScheduleBlockItems = async (request: CallableRequest<unknown
     throw new HttpsError('invalid-argument', 'A ordenação enviada é inválida ou contém duplicidade.');
   }
 
-  const batch = db.batch();
+  const batch = getDb().batch();
   data.items.forEach((item) => {
-    const ref = db.collection('scheduleBlocks').doc(data.blockId).collection('items').doc(item.id);
+    const ref = getDb().collection('scheduleBlocks').doc(data.blockId).collection('items').doc(item.id);
     batch.set(ref, { order: item.order, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
   });
   await batch.commit();
@@ -479,7 +485,7 @@ export const reorderScheduleBlockItems = async (request: CallableRequest<unknown
 };
 
 async function loadBlockItems(blockId: string) {
-  const snapshot = await db.collection('scheduleBlocks').doc(blockId).collection('items').orderBy('order', 'asc').get();
+  const snapshot = await getDb().collection('scheduleBlocks').doc(blockId).collection('items').orderBy('order', 'asc').get();
   return snapshot.docs.map((doc) => {
     const data = doc.data() ?? {};
     return {
@@ -505,7 +511,7 @@ export const getScheduleDayView = async (request: CallableRequest<unknown>) => {
     throw new HttpsError('invalid-argument', 'A data é obrigatória.');
   }
 
-  const snapshot = await db.collection('scheduleBlocks').where('date', '==', data.date).get();
+  const snapshot = await getDb().collection('scheduleBlocks').where('date', '==', data.date).get();
   const sortedDocs = snapshot.docs.sort((a, b) => String(a.data().startTime ?? '').localeCompare(String(b.data().startTime ?? '')));
 
   const blocks = await Promise.all(sortedDocs.map(async (doc) => {
@@ -547,7 +553,7 @@ export const getScheduleWeekView = async (request: CallableRequest<unknown>) => 
     current.setUTCDate(start.getUTCDate() + offset);
     const date = formatDate(current);
 
-    const snapshot = await db.collection('scheduleBlocks').where('date', '==', date).get();
+    const snapshot = await getDb().collection('scheduleBlocks').where('date', '==', date).get();
     const blocks = await Promise.all(snapshot.docs
       .sort((a, b) => String(a.data().startTime ?? '').localeCompare(String(b.data().startTime ?? '')))
       .map(async (doc) => {
