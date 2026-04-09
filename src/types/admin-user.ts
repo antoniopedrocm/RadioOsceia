@@ -6,13 +6,17 @@ export type UserProfile = Exclude<AdminUserRole, 'root'>;
 export type AdminUserStatus = 'ativo' | 'inativo';
 export type UserStatus = AdminUserStatus;
 
+// Camada legada para UI antiga.
+export type LegacyAdminUserRole = 'admin' | 'operador' | 'root';
+export type LegacyAdminUserStatus = 'ativo' | 'inativo';
+
 export interface AdminUserRecord {
   id: string;
   uid: string;
   nome: string;
   email: string;
-  perfil: AdminUserRole;
-  status: AdminUserStatus;
+  perfil: LegacyAdminUserRole;
+  status: LegacyAdminUserStatus;
   dataCriacao: string;
   ultimoAcesso: string;
   provider: string | null;
@@ -34,13 +38,15 @@ export function toLegacyAdminUserStatus(status: CanonicalUserStatus): AdminUserS
 
 export function fromCanonicalUser(user: CanonicalUser): AdminUserRecord {
   const uid = user.firebaseUid ?? user.id;
+  const perfil: LegacyAdminUserRole = user.role === 'ROOT' ? 'root' : user.role === 'ADMIN' ? 'admin' : 'operador';
+  const status: LegacyAdminUserStatus = user.status === 'INACTIVE' ? 'inativo' : 'ativo';
   return {
     id: user.id,
     uid,
     nome: user.name,
     email: user.email,
-    perfil: toLegacyAdminUserRole(user.role),
-    status: toLegacyAdminUserStatus(user.status),
+    perfil,
+    status,
     dataCriacao: user.createdAt ?? '',
     ultimoAcesso: user.lastLoginAt ?? '',
     provider: user.provider ?? null,
