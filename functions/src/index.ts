@@ -21,6 +21,7 @@ initializeApp();
 const db = getFirestore();
 type AdminRole = 'admin' | 'operador';
 type AdminStatus = 'ativo' | 'inativo';
+type LegacyAuthSource = 'firebase' | 'local-root';
 
 function requireAuth(auth: { uid: string } | null | undefined) {
   if (!auth?.uid) {
@@ -32,26 +33,45 @@ function requireAuth(auth: { uid: string } | null | undefined) {
 
 async function requireAdminOrOperator(uid: string) {
   const userDoc = await db.collection('users').doc(uid).get();
-  const role = String(userDoc.data()?.role ?? 'operador');
-  if (!['admin', 'operador'].includes(role)) {
+  const role = normalizeCanonicalRole(userDoc.data()?.role);
+  if (role !== 'ADMIN' && role !== 'OPERADOR') {
     throw new HttpsError('permission-denied', 'Perfil sem permissão para esta operação.');
   }
 }
 
 async function requireAdmin(uid: string) {
   const userDoc = await db.collection('users').doc(uid).get();
-  const role = String(userDoc.data()?.role ?? '');
-  if (role !== 'admin') {
+  const role = normalizeCanonicalRole(userDoc.data()?.role);
+  if (role !== 'ADMIN') {
     throw new HttpsError('permission-denied', 'Somente administradores podem gerenciar usuários.');
   }
 }
 
 function normalizeAdminRole(role: unknown): AdminRole | null {
-  return role === 'admin' || role === 'operador' ? role : null;
+  if (role === 'admin') return 'admin';
+  if (role === 'operador') return 'operador';
+  if (role === 'ADMIN') return 'admin';
+  if (role === 'OPERADOR') return 'operador';
+  return null;
 }
 
 function normalizeAdminStatus(status: unknown): AdminStatus {
+  if (status === 'ACTIVE') return 'ativo';
+  if (status === 'INACTIVE') return 'inativo';
   return status === 'inativo' ? 'inativo' : 'ativo';
+}
+
+function normalizeCanonicalRole(role: unknown): UserRole | null {
+  if (role === 'ROOT' || role === 'ADMIN' || role === 'OPERADOR') return role;
+  if (role === 'root') return 'ROOT';
+  if (role === 'admin') return 'ADMIN';
+  if (role === 'operador') return 'OPERADOR';
+  return null;
+}
+
+function normalizeCanonicalStatus(status: unknown): UserStatus {
+  if (status === 'INACTIVE' || status === 'inativo') return 'INACTIVE';
+  return 'ACTIVE';
 }
 
 function toCanonicalRole(role: AdminRole | 'root'): UserRole {
@@ -79,6 +99,13 @@ function toLegacyStatus(status: UserStatus): AdminStatus {
   return status === 'INACTIVE' ? 'inativo' : 'ativo';
 }
 
+function toLegacyAuthSource(authSource: UserAuthSource, role: UserRole, provider?: string): LegacyAuthSource {
+  if (role === 'ROOT') return 'local-root';
+  if (authSource === 'GOOGLE' || provider === 'google') return 'firebase';
+  if (provider === 'local-root') return 'local-root';
+  return 'firebase';
+}
+
 function getUserProviderLabel(providerData: Array<{ providerId?: string }>) {
   if (!providerData.length) return 'password';
   if (providerData.some((provider) => provider.providerId === 'google.com')) return 'google';
@@ -100,7 +127,7 @@ function toAdminUserViewModel(params: CanonicalUser & {
     dataCriacao: params.createdAt ?? '',
     ultimoAcesso: params.lastLoginAt ?? '',
     provider: params.provider,
-    authSource: params.role === 'ROOT' ? 'local-root' : 'firebase',
+    authSource: toLegacyAuthSource(params.authSource, params.role, params.provider),
     institution: params.institution ?? null,
     disabled: params.status === 'INACTIVE'
   };
@@ -393,7 +420,7 @@ function buildLocalRootUser() {
 
 async function isFirebaseAdmin(uid: string) {
   const userDoc = await db.collection('users').doc(uid).get();
-  return String(userDoc.data()?.role ?? '') === 'admin';
+  return normalizeCanonicalRole(userDoc.data()?.role) === 'ADMIN';
 }
 
 async function requireAdminOrLocalRoot(request: { auth?: { uid?: string } | null; data?: Record<string, unknown> }) {
@@ -425,11 +452,16 @@ async function ensureCanRemoveActiveAdmin(params: { targetUid: string; nextStatu
   }
 
   const activeAdminSnapshot = await db.collection('users')
-    .where('role', '==', 'admin')
-    .where('status', '==', 'ativo')
+    .where('role', 'in', ['ADMIN', 'admin'])
     .get();
 
-  if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== params.targetUid).length === 0) {
+  const remainingActiveAdmins = activeAdminSnapshot.docs.filter((docItem) => {
+    if (docItem.id === params.targetUid) return false;
+    const status = normalizeCanonicalStatus(docItem.data()?.status);
+    return status === 'ACTIVE';
+  });
+
+  if (remainingActiveAdmins.length === 0) {
     throw new HttpsError('failed-precondition', 'Não é permitido remover/desativar o último admin ativo.');
   }
 }
@@ -438,9 +470,9 @@ async function requireAdminOrOperatorOrLocalRoot(request: { auth?: { uid?: strin
   const uid = request.auth?.uid;
   if (uid) {
     const userDoc = await db.collection('users').doc(uid).get();
-    const role = String(userDoc.data()?.role ?? '');
-    if (role === 'admin' || role === 'operador') {
-      return { uid, role, isLocalRoot: false };
+    const role = normalizeCanonicalRole(userDoc.data()?.role);
+    if (role === 'ADMIN' || role === 'OPERADOR') {
+      return { uid, role: role === 'ADMIN' ? 'admin' : 'operador', isLocalRoot: false };
     }
   }
 
@@ -490,7 +522,7 @@ export const listAdminUsers = onCall(async (request) => {
   await requireAdminOrOperatorOrLocalRoot(request);
 
   const auth = getAuth();
-  const adminProfilesSnapshot = await db.collection('users').where('role', 'in', ['admin', 'operador']).get();
+  const adminProfilesSnapshot = await db.collection('users').where('role', 'in', ['ADMIN', 'OPERADOR', 'admin', 'operador']).get();
   const profileByUid = new Map<string, Record<string, unknown>>(adminProfilesSnapshot.docs.map((docItem) => [docItem.id, docItem.data() as Record<string, unknown>]));
 
   let nextPageToken: string | undefined = undefined;
@@ -503,20 +535,24 @@ export const listAdminUsers = onCall(async (request) => {
       const role = normalizeAdminRole(profile?.role);
       if (!role) return;
 
-      const status = normalizeAdminStatus(profile?.status ?? (authUser.disabled ? 'inativo' : 'ativo'));
+      const status = normalizeAdminStatus(profile?.status ?? (authUser.disabled ? 'INACTIVE' : 'ACTIVE'));
+      const canonicalStatus = toCanonicalStatus(status);
+      const provider = getUserProviderLabel(authUser.providerData);
+      const authSource = toCanonicalAuthSource('firebase', provider);
       const viewModel = toAdminUserViewModel({
         id: authUser.uid,
         firebaseUid: authUser.uid,
         email: authUser.email ?? String(profile?.email ?? ''),
         name: authUser.displayName ?? String(profile?.name ?? authUser.email?.split('@')[0] ?? 'Usuário'),
         role: toCanonicalRole(role),
-        status: toCanonicalStatus(status),
-        provider: getUserProviderLabel(authUser.providerData),
-        authSource: toCanonicalAuthSource('firebase', getUserProviderLabel(authUser.providerData)),
-        isActive: !authUser.disabled,
-        isProtected: false,
+        status: canonicalStatus,
+        provider,
+        authSource,
+        isActive: canonicalStatus === 'ACTIVE',
+        isProtected: Boolean(profile?.isProtected ?? false),
         createdAt: authUser.metadata.creationTime ?? undefined,
         lastLoginAt: authUser.metadata.lastSignInTime ?? undefined,
+        updatedAt: undefined,
         institution: typeof profile?.institution === 'string' ? profile.institution : null
       });
 
@@ -558,10 +594,16 @@ export const createAdminUser = onCall(async (request) => {
     id: createdUser.uid,
     name: data.nome.trim(),
     email: data.email.trim().toLowerCase(),
-    role,
-    status,
+    authSource: toCanonicalAuthSource('firebase', 'password'),
+    role: toCanonicalRole(role),
+    status: toCanonicalStatus(status),
     institution: data.institution ?? 'Irmão Áureo',
     isActive: status === 'ativo',
+    isProtected: false,
+    firebaseUid: createdUser.uid,
+    passwordHash: null,
+    provider: 'password',
+    lastLoginAt: createdUser.metadata.lastSignInTime ?? null,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -633,9 +675,15 @@ export const updateAdminUser = onCall(async (request) => {
     id: targetUid,
     name: data.nome.trim(),
     email: targetUser.email ?? '',
-    role,
-    status,
+    authSource: toCanonicalAuthSource('firebase', getUserProviderLabel(targetUser.providerData)),
+    role: toCanonicalRole(role),
+    status: toCanonicalStatus(status),
     isActive: status === 'ativo',
+    isProtected: Boolean(targetSnapshot.data()?.isProtected ?? false),
+    firebaseUid: targetUid,
+    passwordHash: null,
+    provider: getUserProviderLabel(targetUser.providerData),
+    lastLoginAt: targetUser.metadata.lastSignInTime ?? null,
     institution: data.institution ?? 'Irmão Áureo',
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -698,7 +746,11 @@ export const setAdminUserStatus = onCall(async (request) => {
 
   const auth = getAuth();
   await auth.updateUser(targetUid, { disabled: status === 'inativo' });
-  await targetRef.set({ status, isActive: status === 'ativo', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  await targetRef.set({
+    status: toCanonicalStatus(status),
+    isActive: status === 'ativo',
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
 
   return { ok: true };
 });
@@ -728,8 +780,12 @@ export const deleteAdminUser = onCall(async (request) => {
   }
 
   if (targetRole === 'admin') {
-    const activeAdminSnapshot = await db.collection('users').where('role', '==', 'admin').where('status', '==', 'ativo').get();
-    if (activeAdminSnapshot.docs.filter((docItem) => docItem.id !== data.uid).length === 0) {
+    const activeAdminSnapshot = await db.collection('users').where('role', 'in', ['ADMIN', 'admin']).get();
+    const remainingActiveAdmins = activeAdminSnapshot.docs.filter((docItem) => {
+      if (docItem.id === data.uid) return false;
+      return normalizeCanonicalStatus(docItem.data()?.status) === 'ACTIVE';
+    });
+    if (remainingActiveAdmins.length === 0) {
       throw new HttpsError('failed-precondition', 'Não é permitido remover o último admin ativo.');
     }
   }
@@ -739,7 +795,7 @@ export const deleteAdminUser = onCall(async (request) => {
   await targetRef.set({
     deleted: true,
     deletedAt: FieldValue.serverTimestamp(),
-    status: 'inativo',
+    status: 'INACTIVE',
     isActive: false,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -834,8 +890,8 @@ export const bootstrapSeedData = onCall(async () => {
   }, { merge: true });
 
   const users = [
-    { uid: 'admin-radio', email: 'admin@irmaoaureo.dev', password: 'Admin@123456', role: 'admin', name: 'Administrador Rádio Irmão Áureo' },
-    { uid: 'operador-radio', email: 'operador@irmaoaureo.dev', password: 'Operador@123456', role: 'operador', name: 'Operador Rádio Irmão Áureo' }
+    { uid: 'admin-radio', email: 'admin@irmaoaureo.dev', password: 'Admin@123456', role: 'ADMIN' as const, name: 'Administrador Rádio Irmão Áureo' },
+    { uid: 'operador-radio', email: 'operador@irmaoaureo.dev', password: 'Operador@123456', role: 'OPERADOR' as const, name: 'Operador Rádio Irmão Áureo' }
   ];
 
   for (const user of users) {
@@ -846,11 +902,19 @@ export const bootstrapSeedData = onCall(async () => {
     }
 
     await db.collection('users').doc(user.uid).set({
+      id: user.uid,
       name: user.name,
       email: user.email,
+      authSource: 'LOCAL',
       role: user.role,
+      status: 'ACTIVE',
       institution: 'Irmão Áureo',
       isActive: true,
+      isProtected: false,
+      firebaseUid: user.uid,
+      passwordHash: null,
+      provider: 'password',
+      lastLoginAt: null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
