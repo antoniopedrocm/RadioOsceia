@@ -63,6 +63,11 @@ service cloud.firestore {
     match /scheduleBlocks/{docId} {
       allow read: if true;
       allow write: if isAdminOrOperator();
+
+      match /items/{itemId} {
+        allow read: if true;
+        allow write: if isAdminOrOperator();
+      }
     }
 
     match /auditLogs/{docId} {

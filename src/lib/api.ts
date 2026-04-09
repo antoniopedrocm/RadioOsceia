@@ -13,9 +13,18 @@ import {
   where,
   type Timestamp
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { db } from '@/lib/firebase';
+import { functions } from '@/lib/firebase';
 import type { ProgramStatus } from '@/types/program';
 import type { AdminMediaRecord, MediaStatus } from '@/types/media';
+import type {
+  CreateScheduleBlockPayload,
+  PlaybackTimelineResponse,
+  ScheduleDayViewResponse,
+  ScheduleWeekViewResponse,
+  UpdateScheduleBlockPayload
+} from '@/types/schedule';
 import { parseYoutubeUrl } from '@/lib/youtube';
 import {
   buildNowPlayingPayload as buildSharedNowPlayingPayload,
@@ -815,7 +824,42 @@ export const api = {
   get: <T>(path: string, init?: RequestInit) => request<T>(path, { ...init, method: 'GET' }),
   post: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
-  del: <T>(path: string, init?: RequestInit) => request<T>(path, { ...init, method: 'DELETE' })
+  del: <T>(path: string, init?: RequestInit) => request<T>(path, { ...init, method: 'DELETE' }),
+  async getScheduleDayView(payload: { date: string }) {
+    const callable = httpsCallable<{ date: string }, ScheduleDayViewResponse>(functions, 'getScheduleDayView');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async getScheduleWeekView(payload: { weekStartDate: string }) {
+    const callable = httpsCallable<{ weekStartDate: string }, ScheduleWeekViewResponse>(functions, 'getScheduleWeekView');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async createScheduleBlock(payload: CreateScheduleBlockPayload) {
+    const callable = httpsCallable<CreateScheduleBlockPayload, { ok: true; createdBlockIds: string[]; recurrenceGroupId?: string | null }>(functions, 'createScheduleBlock');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async updateScheduleBlock(payload: UpdateScheduleBlockPayload) {
+    const callable = httpsCallable<UpdateScheduleBlockPayload, { ok: true; updatedBlockIds: string[] }>(functions, 'updateScheduleBlock');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async deleteScheduleBlock(payload: { blockId: string; deleteScope?: 'THIS' | 'THIS_AND_FUTURE' | 'ALL_IN_GROUP' }) {
+    const callable = httpsCallable<typeof payload, { ok: true; deletedBlockIds: string[] }>(functions, 'deleteScheduleBlock');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async reorderScheduleBlockItems(payload: { blockId: string; items: Array<{ id: string; order: number }> }) {
+    const callable = httpsCallable<typeof payload, { ok: true }>(functions, 'reorderScheduleBlockItems');
+    const response = await callable(payload);
+    return response.data;
+  },
+  async getPlaybackTimeline(payload?: { now?: string | null }) {
+    const callable = httpsCallable<{ now?: string | null }, PlaybackTimelineResponse>(functions, 'getPlaybackTimeline');
+    const response = await callable(payload ?? {});
+    return response.data;
+  }
 };
 
 export { REQUEST_TIMEOUT_MS, token };
