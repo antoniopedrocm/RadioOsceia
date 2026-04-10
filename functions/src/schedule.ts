@@ -505,13 +505,12 @@ function sumDuration(items: Array<{ durationSeconds: number; isEnabled: boolean 
   return items.filter((item) => item.isEnabled).reduce((acc, item) => acc + Number(item.durationSeconds ?? 0), 0);
 }
 
-export const getScheduleDayView = onCall(async (request: CallableRequest<unknown>) => {
-  const data = request.data as { date: string };
-  if (!data?.date) {
+export async function resolveScheduleDayView(date: string) {
+  if (!date) {
     throw new HttpsError('invalid-argument', 'A data é obrigatória.');
   }
 
-  const snapshot = await getDb().collection('scheduleBlocks').where('date', '==', data.date).get();
+  const snapshot = await getDb().collection('scheduleBlocks').where('date', '==', date).get();
   const sortedDocs = snapshot.docs.sort((a, b) => String(a.data().startTime ?? '').localeCompare(String(b.data().startTime ?? '')));
 
   const blocks = await Promise.all(sortedDocs.map(async (doc) => {
@@ -522,7 +521,7 @@ export const getScheduleDayView = onCall(async (request: CallableRequest<unknown
       id: doc.id,
       title: String(blockData.title ?? 'Bloco sem título'),
       description: typeof blockData.description === 'string' ? blockData.description : null,
-      date: String(blockData.date ?? data.date),
+      date: String(blockData.date ?? date),
       startTime: String(blockData.startTime ?? '00:00'),
       endTime: String(blockData.endTime ?? '00:00'),
       status: normalizeScheduleStatus(blockData.status),
@@ -536,7 +535,12 @@ export const getScheduleDayView = onCall(async (request: CallableRequest<unknown
     };
   }));
 
-  return { date: data.date, blocks };
+  return { date, blocks };
+}
+
+export const getScheduleDayView = onCall(async (request: CallableRequest<unknown>) => {
+  const data = request.data as { date: string };
+  return resolveScheduleDayView(data?.date);
 });
 
 export const getScheduleWeekView = onCall(async (request: CallableRequest<unknown>) => {
@@ -591,7 +595,7 @@ export async function resolvePlaybackTimeline(nowIso?: string | null) {
   }
 
   const date = now.toISOString().slice(0, 10);
-  const dayView = await getScheduleDayView({ data: { date } } as CallableRequest<unknown>);
+  const dayView = await resolveScheduleDayView(date);
 
   const timeline: Array<{
     blockId: string;
