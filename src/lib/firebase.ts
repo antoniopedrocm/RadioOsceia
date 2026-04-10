@@ -58,7 +58,7 @@ try {
   const app = initializeApp(firebaseConfig);
   authInstance = getAuth(app);
   dbInstance = getFirestore(app);
-  functionsInstance = getFunctions(app);
+  functionsInstance = getFunctions(app, 'us-central1');
 } catch (error) {
   const details = error instanceof Error ? error.message : String(error);
   firebaseInitializationError = new Error(
