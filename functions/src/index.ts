@@ -13,3 +13,5 @@ export {
   getScheduleWeekView,
   getPlaybackTimeline
 } from './schedule';
+
+export { loginLocalUser, linkGoogleUserOnFirstLogin } from './auth';
