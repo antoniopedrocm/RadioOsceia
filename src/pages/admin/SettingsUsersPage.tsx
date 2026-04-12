@@ -16,10 +16,9 @@ function isAdministrative(user: CanonicalUser) {
 }
 
 export function SettingsUsersPage() {
-  const { user, isLocalRoot, sessionType } = useAdminAuth();
-  const requiresLocalRootMessage = 'Faça login local-root para gerenciar usuários.';
-  const isUsersApiSessionAllowed = sessionType === 'LOCAL' && isLocalRoot && user?.role === 'root';
-  const canManageUsers = isUsersApiSessionAllowed;
+  const { user } = useAdminAuth();
+  const accessDeniedMessage = 'Acesso negado: apenas perfis ADMIN ou ROOT podem gerenciar usuários.';
+  const canManageUsers = user?.role === 'root' || user?.role === 'admin';
 
   const [users, setUsers] = useState<CanonicalUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,9 +40,9 @@ export function SettingsUsersPage() {
   );
 
   const loadUsers = useCallback(async () => {
-    if (!isUsersApiSessionAllowed) {
+    if (!canManageUsers) {
       setUsers([]);
-      setError(requiresLocalRootMessage);
+      setError(accessDeniedMessage);
       setIsLoading(false);
       return;
     }
@@ -59,16 +58,23 @@ export function SettingsUsersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [isUsersApiSessionAllowed, requiresLocalRootMessage]);
+  }, [accessDeniedMessage, canManageUsers]);
 
   useEffect(() => {
+    if (!canManageUsers) {
+      setUsers([]);
+      setError(accessDeniedMessage);
+      setIsLoading(false);
+      return;
+    }
+
     loadUsers();
-  }, [loadUsers]);
+  }, [accessDeniedMessage, canManageUsers, loadUsers]);
 
   const handleRefresh = () => {
-    if (!isUsersApiSessionAllowed) {
+    if (!canManageUsers) {
       setFeedback(null);
-      setError(requiresLocalRootMessage);
+      setError(accessDeniedMessage);
       setIsLoading(false);
       return;
     }
@@ -251,7 +257,7 @@ export function SettingsUsersPage() {
             <div>
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {feedback ? <p className="text-sm text-emerald-700">{feedback}</p> : null}
-              {!canManageUsers ? <p className="text-xs text-muted-foreground">{requiresLocalRootMessage}</p> : null}
+              {!canManageUsers ? <p className="text-xs text-muted-foreground">{accessDeniedMessage}</p> : null}
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleRefresh} disabled={isLoading}>Atualizar</Button>
