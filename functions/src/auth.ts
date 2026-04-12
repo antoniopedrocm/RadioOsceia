@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https';
 import { FieldValue, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
@@ -106,30 +106,61 @@ function mapCanonicalUser(snapshot: QueryDocumentSnapshot): CanonicalUser {
 const AUTH_REQUIRED_ERROR_MESSAGE = 'Autenticação obrigatória.';
 const PERMISSION_DENIED_ERROR_MESSAGE = 'Permissão insuficiente.';
 
+function summarizeTokenForLogs(token: string) {
+  const hash = createHash('sha256').update(token).digest('hex').slice(0, 16);
+  return {
+    tokenHashPrefix: hash,
+    tokenPrefix: token.slice(0, 6),
+    tokenLength: token.length
+  };
+}
+
 async function requireLocalRootToken(token: unknown) {
   const normalizedToken = String(token ?? '').trim();
   if (!normalizedToken) {
     throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
+  const tokenLog = summarizeTokenForLogs(normalizedToken);
   const sessionSnapshot = await db.collection('localSessions').doc(normalizedToken).get();
   if (!sessionSnapshot.exists) {
+    console.warn('[auth.requireLocalRootToken] localSession_not_found', {
+      ...tokenLog
+    });
     throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
   const sessionData = sessionSnapshot.data() ?? {};
   const expiresAtMs = Date.parse(String(sessionData.expiresAt ?? ''));
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+    console.warn('[auth.requireLocalRootToken] localSession_expired_or_invalid', {
+      ...tokenLog,
+      expiresAt: sessionData.expiresAt ?? null,
+      expiresAtMs
+    });
     throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
   const userId = String(sessionData.userId ?? '').trim();
+  console.info('[auth.requireLocalRootToken] localSession_resolved', {
+    ...tokenLog,
+    userId: userId || null,
+    expiresAt: sessionData.expiresAt ?? null
+  });
+
   if (!userId) {
+    console.warn('[auth.requireLocalRootToken] permission_denied_missing_userId', {
+      ...tokenLog
+    });
     throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
   const userDoc = await db.collection('users').doc(userId).get();
   if (!userDoc.exists) {
+    console.warn('[auth.requireLocalRootToken] permission_denied_user_not_found', {
+      ...tokenLog,
+      userId
+    });
     throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
@@ -137,7 +168,29 @@ async function requireLocalRootToken(token: unknown) {
   const role = normalizeUserRole(userData.role);
   const status = normalizeUserStatus(userData.status);
 
+  console.info('[auth.requireLocalRootToken] user_role_status_resolved', {
+    ...tokenLog,
+    userId,
+    role,
+    status,
+    roleRaw: userData.role ?? null,
+    statusRaw: userData.status ?? null
+  });
+
   if (status !== 'ACTIVE' || (role !== 'ROOT' && role !== 'ADMIN')) {
+    console.warn('[auth.requireLocalRootToken] permission_denied_invalid_role_or_status', {
+      ...tokenLog,
+      userId,
+      role,
+      status,
+      roleRaw: userData.role ?? null,
+      statusRaw: userData.status ?? null,
+      requiredRoles: ['ROOT', 'ADMIN'],
+      requiredStatus: 'ACTIVE',
+      actionHint: role === 'OPERADOR'
+        ? 'Atualize o role no Firestore para ADMIN/ROOT ou bloqueie a UI para OPERADOR antes da chamada.'
+        : 'Confirme no Firestore se role/status do users/{userId} está consistente com ADMIN/ROOT e ACTIVE.'
+    });
     throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
