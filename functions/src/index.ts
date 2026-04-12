@@ -14,4 +14,14 @@ export {
   getPlaybackTimeline
 } from './schedule';
 
-export { loginLocalUser, linkGoogleUserOnFirstLogin } from './auth';
+export {
+  loginLocalUser,
+  verifyLocalSession,
+  bootstrapRootAdmin,
+  listAppUsers,
+  createAppUser,
+  updateAppUser,
+  setAppUserPassword,
+  deleteAppUser,
+  linkGoogleUserOnFirstLogin
+} from './auth';
