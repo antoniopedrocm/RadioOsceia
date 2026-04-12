@@ -11,7 +11,8 @@ export {
   reorderScheduleBlockItems,
   getScheduleDayView,
   getScheduleWeekView,
-  getPlaybackTimeline
+  getPlaybackTimeline,
+  getNowPlaying
 } from './schedule';
 
 export {
