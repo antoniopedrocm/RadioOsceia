@@ -16,8 +16,10 @@ function isAdministrative(user: CanonicalUser) {
 }
 
 export function SettingsUsersPage() {
-  const { user, isLocalRoot } = useAdminAuth();
-  const canManageUsers = isLocalRoot || user?.role === 'admin';
+  const { user, isLocalRoot, sessionType } = useAdminAuth();
+  const requiresLocalRootMessage = 'Faça login local-root para gerenciar usuários.';
+  const isUsersApiSessionAllowed = sessionType === 'LOCAL' && isLocalRoot && user?.role === 'root';
+  const canManageUsers = isUsersApiSessionAllowed;
 
   const [users, setUsers] = useState<CanonicalUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,6 +41,13 @@ export function SettingsUsersPage() {
   );
 
   const loadUsers = useCallback(async () => {
+    if (!isUsersApiSessionAllowed) {
+      setUsers([]);
+      setError(requiresLocalRootMessage);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     try {
@@ -50,11 +59,22 @@ export function SettingsUsersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isUsersApiSessionAllowed, requiresLocalRootMessage]);
 
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  const handleRefresh = () => {
+    if (!isUsersApiSessionAllowed) {
+      setFeedback(null);
+      setError(requiresLocalRootMessage);
+      setIsLoading(false);
+      return;
+    }
+
+    loadUsers();
+  };
 
   const closeForm = () => {
     setIsFormOpen(false);
@@ -231,10 +251,10 @@ export function SettingsUsersPage() {
             <div>
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {feedback ? <p className="text-sm text-emerald-700">{feedback}</p> : null}
-              {!canManageUsers ? <p className="text-xs text-muted-foreground">Perfil operador possui acesso somente leitura.</p> : null}
+              {!canManageUsers ? <p className="text-xs text-muted-foreground">{requiresLocalRootMessage}</p> : null}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={loadUsers} disabled={isLoading}>Atualizar</Button>
+              <Button variant="outline" onClick={handleRefresh} disabled={isLoading}>Atualizar</Button>
               {canManageUsers && <Button onClick={openCreate}>+ Novo usuário</Button>}
             </div>
           </div>
