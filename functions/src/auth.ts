@@ -21,11 +21,11 @@ interface VerifyLocalSessionPayload {
   token?: unknown;
 }
 
-interface LocalRootAuthorizedPayload {
+interface AdminAuthorizedPayload {
   localRootToken?: unknown;
 }
 
-interface CreateAppUserPayload extends LocalRootAuthorizedPayload {
+interface CreateAppUserPayload extends AdminAuthorizedPayload {
   name?: unknown;
   email?: unknown;
   role?: unknown;
@@ -35,7 +35,7 @@ interface CreateAppUserPayload extends LocalRootAuthorizedPayload {
   password?: unknown;
 }
 
-interface UpdateAppUserPayload extends LocalRootAuthorizedPayload {
+interface UpdateAppUserPayload extends AdminAuthorizedPayload {
   uid?: unknown;
   name?: unknown;
   role?: unknown;
@@ -43,12 +43,12 @@ interface UpdateAppUserPayload extends LocalRootAuthorizedPayload {
   institution?: unknown;
 }
 
-interface SetAppUserPasswordPayload extends LocalRootAuthorizedPayload {
+interface SetAppUserPasswordPayload extends AdminAuthorizedPayload {
   uid?: unknown;
   password?: unknown;
 }
 
-interface DeleteAppUserPayload extends LocalRootAuthorizedPayload {
+interface DeleteAppUserPayload extends AdminAuthorizedPayload {
   uid?: unknown;
 }
 
@@ -103,31 +103,34 @@ function mapCanonicalUser(snapshot: QueryDocumentSnapshot): CanonicalUser {
   };
 }
 
+const AUTH_REQUIRED_ERROR_MESSAGE = 'Autenticação obrigatória.';
+const PERMISSION_DENIED_ERROR_MESSAGE = 'Permissão insuficiente.';
+
 async function requireLocalRootToken(token: unknown) {
   const normalizedToken = String(token ?? '').trim();
   if (!normalizedToken) {
-    throw new HttpsError('unauthenticated', 'Sessão local inválida.');
+    throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
   const sessionSnapshot = await db.collection('localSessions').doc(normalizedToken).get();
   if (!sessionSnapshot.exists) {
-    throw new HttpsError('unauthenticated', 'Sessão local expirada.');
+    throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
   const sessionData = sessionSnapshot.data() ?? {};
   const expiresAtMs = Date.parse(String(sessionData.expiresAt ?? ''));
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-    throw new HttpsError('unauthenticated', 'Sessão local expirada.');
+    throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
   }
 
   const userId = String(sessionData.userId ?? '').trim();
   if (!userId) {
-    throw new HttpsError('permission-denied', 'Sessão local sem usuário vinculado.');
+    throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
   const userDoc = await db.collection('users').doc(userId).get();
   if (!userDoc.exists) {
-    throw new HttpsError('permission-denied', 'Usuário da sessão não encontrado.');
+    throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
   const userData = userDoc.data() ?? {};
@@ -135,10 +138,37 @@ async function requireLocalRootToken(token: unknown) {
   const status = normalizeUserStatus(userData.status);
 
   if (status !== 'ACTIVE' || (role !== 'ROOT' && role !== 'ADMIN')) {
-    throw new HttpsError('permission-denied', 'Permissão insuficiente.');
+    throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
   }
 
-  return { userId, role, expiresAt: String(sessionData.expiresAt) };
+  return { userId, role, expiresAt: String(sessionData.expiresAt), source: 'localRootToken' as const };
+}
+
+async function requireAdminOrLocalRoot(request: CallableRequest<AdminAuthorizedPayload>) {
+  const localRootToken = String(request.data?.localRootToken ?? '').trim();
+  if (localRootToken) {
+    return requireLocalRootToken(localRootToken);
+  }
+
+  const firebaseUid = String(request.auth?.uid ?? '').trim();
+  if (!firebaseUid) {
+    throw new HttpsError('unauthenticated', AUTH_REQUIRED_ERROR_MESSAGE);
+  }
+
+  const userDoc = await db.collection('users').doc(firebaseUid).get();
+  if (!userDoc.exists) {
+    throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
+  }
+
+  const userData = userDoc.data() ?? {};
+  const role = normalizeUserRole(userData.role);
+  const status = normalizeUserStatus(userData.status);
+
+  if (status !== 'ACTIVE' || (role !== 'ROOT' && role !== 'ADMIN')) {
+    throw new HttpsError('permission-denied', PERMISSION_DENIED_ERROR_MESSAGE);
+  }
+
+  return { userId: firebaseUid, role, source: 'firebaseAuth' as const };
 }
 
 async function findLocalUserByEmailOrUsername(value: string) {
@@ -287,8 +317,8 @@ export const bootstrapRootAdmin = onCall(async () => {
   return { ok: true as const, created: true, user: mapCanonicalUser(created as QueryDocumentSnapshot) };
 });
 
-export const listAppUsers = onCall(async (request: CallableRequest<LocalRootAuthorizedPayload>) => {
-  await requireLocalRootToken(request.data?.localRootToken);
+export const listAppUsers = onCall(async (request: CallableRequest<AdminAuthorizedPayload>) => {
+  await requireAdminOrLocalRoot(request);
   const usersSnapshot = await db.collection('users').orderBy('name', 'asc').get();
   return {
     users: usersSnapshot.docs.map((doc) => mapCanonicalUser(doc))
@@ -296,7 +326,7 @@ export const listAppUsers = onCall(async (request: CallableRequest<LocalRootAuth
 });
 
 export const createAppUser = onCall(async (request: CallableRequest<CreateAppUserPayload>) => {
-  await requireLocalRootToken(request.data?.localRootToken);
+  await requireAdminOrLocalRoot(request);
 
   const name = String(request.data?.name ?? '').trim();
   const email = String(request.data?.email ?? '').trim().toLowerCase();
@@ -338,7 +368,7 @@ export const createAppUser = onCall(async (request: CallableRequest<CreateAppUse
 });
 
 export const updateAppUser = onCall(async (request: CallableRequest<UpdateAppUserPayload>) => {
-  await requireLocalRootToken(request.data?.localRootToken);
+  await requireAdminOrLocalRoot(request);
 
   const uid = String(request.data?.uid ?? '').trim();
   if (!uid) {
@@ -369,7 +399,7 @@ export const updateAppUser = onCall(async (request: CallableRequest<UpdateAppUse
 });
 
 export const setAppUserPassword = onCall(async (request: CallableRequest<SetAppUserPasswordPayload>) => {
-  await requireLocalRootToken(request.data?.localRootToken);
+  await requireAdminOrLocalRoot(request);
   const uid = String(request.data?.uid ?? '').trim();
   const password = String(request.data?.password ?? '');
 
@@ -394,7 +424,7 @@ export const setAppUserPassword = onCall(async (request: CallableRequest<SetAppU
 });
 
 export const deleteAppUser = onCall(async (request: CallableRequest<DeleteAppUserPayload>) => {
-  await requireLocalRootToken(request.data?.localRootToken);
+  await requireAdminOrLocalRoot(request);
   const uid = String(request.data?.uid ?? '').trim();
   if (!uid) {
     throw new HttpsError('invalid-argument', 'UID do usuário é obrigatório.');
