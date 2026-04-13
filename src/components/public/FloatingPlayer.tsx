@@ -10,9 +10,9 @@ export function FloatingPlayer() {
   const [playing, setPlaying] = useState(true);
   const { data: nowPlaying } = useNowPlaying();
   const { data: upNext } = useUpcomingQueue();
-  const hasActiveMedia = nowPlaying !== null;
-  const currentTitle = nowPlaying?.media.title ?? 'Nenhuma transmissão no momento';
-  const currentSource = nowPlaying ? nowPlaying.media.sourceType : 'Aguardando programação';
+  const hasActiveMedia = nowPlaying?.media != null;
+  const currentTitle = nowPlaying?.media?.title ?? nowPlaying?.title ?? 'Nenhuma transmissão no momento';
+  const currentSource = nowPlaying?.media?.sourceType ?? 'Fonte indisponível';
   const nextItem = upNext[0];
 
   return (
@@ -44,7 +44,7 @@ export function FloatingPlayer() {
               <Radio className="h-3 w-3 text-destructive" />
               {hasActiveMedia ? 'Ao vivo agora' : 'Sem transmissão ativa'}
             </span>
-            <span>{hasActiveMedia ? `Origem: ${currentSource}` : (nextItem ? `Próxima: ${nextItem.title}` : 'Sem próximos conteúdos')}</span>
+            <span>{hasActiveMedia ? ['Origem:', currentSource].join(' ') : (nextItem ? ['Próxima:', nextItem.title].join(' ') : 'Sem próximos conteúdos')}</span>
           </div>
         )}
       </div>

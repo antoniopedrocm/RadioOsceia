@@ -24,8 +24,8 @@ export function NowPlayingCard() {
           <EmptyState title="Nenhuma transmissão no momento" compact />
         ) : (
           <>
-            <h3 className="font-semibold">{data.title}</h3>
-            <p className="text-sm text-muted-foreground">{`${data.media.title} • ${data.media.sourceType}`}</p>
+            <h3 className="font-semibold">{data?.media?.title ?? data?.title ?? 'Nenhuma transmissão no momento'}</h3>
+            <p className="text-sm text-muted-foreground">{data?.media?.sourceType ?? 'Fonte indisponível'}</p>
           </>
         )}
       </CardContent>
