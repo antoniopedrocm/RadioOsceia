@@ -20,12 +20,12 @@ export function NowPlayingCard() {
             tone="warning"
             compact
           />
+        ) : data === null ? (
+          <EmptyState title="Nenhuma transmissão no momento" compact />
         ) : (
           <>
-            <h3 className="font-semibold">{data?.title ?? 'Sem conteúdo no ar'}</h3>
-            <p className="text-sm text-muted-foreground">
-              {data ? `${data.media.title} • ${data.media.sourceType}` : 'Aguardando programação'}
-            </p>
+            <h3 className="font-semibold">{data.title}</h3>
+            <p className="text-sm text-muted-foreground">{`${data.media.title} • ${data.media.sourceType}`}</p>
           </>
         )}
       </CardContent>

@@ -29,7 +29,11 @@ export function UpcomingQueue() {
             ))}
           </div>
         ) : (
-          <EmptyState title="Sem próximos itens" description="A fila pública ainda não possui conteúdos agendados." compact />
+          <EmptyState
+            title="Nenhuma transmissão no momento"
+            description="Não há itens confirmados na sequência imediata da programação."
+            compact
+          />
         )}
       </CardContent>
     </Card>
