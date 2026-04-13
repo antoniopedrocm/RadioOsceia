@@ -49,8 +49,62 @@ const EMPTY_DASHBOARD: DashboardSummary = {
 };
 const EMPTY_TIMELINE: TimelineBlock[] = [];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
+  const record = isRecord(payload) ? payload : {};
+  const upNext = Array.isArray(record.upNext) ? (record.upNext as NowPlayingUpNextItem[]) : EMPTY_UPCOMING;
+  const institution = isRecord(record.institution)
+    ? (record.institution as NowPlayingResponse['institution'])
+    : { id: '', slug: '', name: '' };
+
+  const nowPlayingRaw = record.nowPlaying;
+  if (nowPlayingRaw === null || nowPlayingRaw === undefined) {
+    return { institution, nowPlaying: null, upNext };
+  }
+
+  if (isRecord(nowPlayingRaw) && isRecord(nowPlayingRaw.media)) {
+    return { institution, nowPlaying: nowPlayingRaw as NowPlayingResponse['nowPlaying'], upNext };
+  }
+
+  const legacyFlatNowPlaying = isRecord(nowPlayingRaw) ? nowPlayingRaw : record;
+  const mediaId = legacyFlatNowPlaying.mediaId;
+  const mediaTitle = legacyFlatNowPlaying.mediaTitle ?? legacyFlatNowPlaying.title;
+  const sourceType = legacyFlatNowPlaying.sourceType;
+  const mediaType = legacyFlatNowPlaying.mediaType;
+
+  if (
+    typeof mediaId === 'string' &&
+    typeof mediaTitle === 'string' &&
+    typeof sourceType === 'string' &&
+    typeof mediaType === 'string'
+  ) {
+    return {
+      institution,
+      nowPlaying: {
+        source: typeof legacyFlatNowPlaying.source === 'string' ? legacyFlatNowPlaying.source : sourceType,
+        title: typeof legacyFlatNowPlaying.title === 'string' ? legacyFlatNowPlaying.title : mediaTitle,
+        media: {
+          id: mediaId,
+          title: mediaTitle,
+          sourceType,
+          mediaType,
+          youtubeVideoId: typeof legacyFlatNowPlaying.youtubeVideoId === 'string' ? legacyFlatNowPlaying.youtubeVideoId : null,
+          publicUrl: typeof legacyFlatNowPlaying.publicUrl === 'string' ? legacyFlatNowPlaying.publicUrl : null
+        }
+      },
+      upNext
+    };
+  }
+
+  console.warn('[useRadioData] Resposta de nowPlaying inválida; exibindo estado vazio.', payload);
+  return { institution, nowPlaying: null, upNext };
+}
+
 export function useNowPlaying() {
-  const loader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
+  const loader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
 
   return useApiResource(loader, {
     initialData: null as NowPlayingResponse['nowPlaying'] | null,
@@ -60,7 +114,7 @@ export function useNowPlaying() {
 }
 
 export function useUpcomingQueue() {
-  const loader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
+  const loader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
 
   return useApiResource(loader, {
     initialData: EMPTY_UPCOMING,
@@ -123,7 +177,7 @@ export function useScheduleTimeline(weekday: string) {
     (signal: AbortSignal) => api.get<TimelineResponse>(`/public/institutions/irmao-aureo/timeline?weekday=${weekday}`, { signal }),
     [weekday]
   );
-  const nowPlayingLoader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
+  const nowPlayingLoader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
 
   const mapTimeline = useCallback((response: TimelineResponse) => response.blocks ?? EMPTY_TIMELINE, []);
   const mapPlayback = useCallback((response: NowPlayingResponse) => ({
