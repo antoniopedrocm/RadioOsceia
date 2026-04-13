@@ -2,8 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { api } from '@/lib/api';
 import { useApiResource } from '@/hooks/useApiResource';
 import type { Presenter, Program } from '@/types';
-import type { DashboardSummary, NowPlayingResponse } from '@/types/api';
-import type { PlaybackTimelineResponse } from '@/types/schedule';
+import type { DashboardSummary, NowPlayingResponse, NowPlayingUpNextItem } from '@/types/api';
 
 interface ApiProgram {
   id: string;
@@ -19,12 +18,6 @@ interface ApiPresenter {
   name: string;
   shortBio?: string;
   photoUrl?: string;
-}
-
-interface UpNextItem {
-  id: string;
-  title: string;
-  startTime: string;
 }
 
 interface TimelineBlock {
@@ -46,7 +39,7 @@ interface TimelineResponse {
 
 const EMPTY_PROGRAMS: Program[] = [];
 const EMPTY_PRESENTERS: Presenter[] = [];
-const EMPTY_UPCOMING: UpNextItem[] = [];
+const EMPTY_UPCOMING: NowPlayingUpNextItem[] = [];
 const EMPTY_DASHBOARD: DashboardSummary = {
   programs: 0,
   media: 0,
@@ -57,34 +50,21 @@ const EMPTY_DASHBOARD: DashboardSummary = {
 const EMPTY_TIMELINE: TimelineBlock[] = [];
 
 export function useNowPlaying() {
-  const loader = useCallback((_signal: AbortSignal) => api.getPlaybackTimeline(), []);
+  const loader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
 
   return useApiResource(loader, {
     initialData: null as NowPlayingResponse['nowPlaying'] | null,
-    mapData: (response: PlaybackTimelineResponse) => response.current ? {
-      source: 'scheduleBlocks',
-      title: response.current.itemTitle ?? response.current.blockTitle,
-      media: {
-        id: response.current.itemId ?? response.current.blockId,
-        title: response.current.itemTitle ?? response.current.blockTitle,
-        sourceType: 'SCHEDULE',
-        mediaType: 'PROGRAMADO'
-      }
-    } : null,
+    mapData: (response: NowPlayingResponse) => response.nowPlaying,
     fallbackMessage: 'Não foi possível carregar o conteúdo atual.'
   });
 }
 
 export function useUpcomingQueue() {
-  const loader = useCallback((_signal: AbortSignal) => api.getPlaybackTimeline(), []);
+  const loader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
 
   return useApiResource(loader, {
     initialData: EMPTY_UPCOMING,
-    mapData: (response: PlaybackTimelineResponse): UpNextItem[] => response.next.map((item) => ({
-      id: item.itemId ?? item.blockId,
-      title: item.itemTitle ?? item.blockTitle,
-      startTime: new Date(item.startsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    })),
+    mapData: (response: NowPlayingResponse): NowPlayingUpNextItem[] => response.upNext,
     fallbackMessage: 'Não foi possível carregar a fila de próximos conteúdos.'
   });
 }
@@ -143,12 +123,12 @@ export function useScheduleTimeline(weekday: string) {
     (signal: AbortSignal) => api.get<TimelineResponse>(`/public/institutions/irmao-aureo/timeline?weekday=${weekday}`, { signal }),
     [weekday]
   );
-  const nowPlayingLoader = useCallback((signal: AbortSignal) => api.get<NowPlayingResponse>('/public/institutions/irmao-aureo/now-playing', { signal }), []);
+  const nowPlayingLoader = useCallback((_signal: AbortSignal) => api.getNowPlaying(), []);
 
   const mapTimeline = useCallback((response: TimelineResponse) => response.blocks ?? EMPTY_TIMELINE, []);
   const mapPlayback = useCallback((response: NowPlayingResponse) => ({
     nowPlaying: response.nowPlaying,
-    upNext: (response as NowPlayingResponse & { upNext?: UpNextItem[] }).upNext ?? EMPTY_UPCOMING
+    upNext: response.upNext
   }), []);
 
   const timelineState = useApiResource(timelineLoader, {
