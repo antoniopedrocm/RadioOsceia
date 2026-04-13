@@ -20,6 +20,13 @@ export interface NowPlayingResponse {
       publicUrl?: string | null;
     };
   } | null;
+  upNext: NowPlayingUpNextItem[];
+}
+
+export interface NowPlayingUpNextItem {
+  id: string;
+  title: string;
+  startTime: string;
 }
 
 export interface DashboardSummary {

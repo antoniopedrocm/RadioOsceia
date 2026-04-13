@@ -18,6 +18,7 @@ import { db } from '@/lib/firebase';
 import { functions } from '@/lib/firebase';
 import type { ProgramStatus } from '@/types/program';
 import type { AdminMediaRecord, MediaStatus } from '@/types/media';
+import type { NowPlayingResponse } from '@/types/api';
 import type {
   CreateScheduleBlockPayload,
   PlaybackTimelineResponse,
@@ -216,6 +217,10 @@ export interface BootstrapRootAdminResponse {
   ok: true;
   created: boolean;
   user: CanonicalUser;
+}
+
+interface GetNowPlayingCallablePayload {
+  now?: string | null;
 }
 
 export interface ListAppUsersResponse {
@@ -940,6 +945,11 @@ export const api = {
   },
   async getPlaybackTimeline(payload?: { now?: string | null }) {
     const callable = httpsCallable<{ now?: string | null }, PlaybackTimelineResponse>(functions, 'getPlaybackTimeline');
+    const response = await callable(payload ?? {});
+    return response.data;
+  },
+  async getNowPlaying(payload?: GetNowPlayingCallablePayload) {
+    const callable = httpsCallable<GetNowPlayingCallablePayload, NowPlayingResponse>(functions, 'getNowPlaying');
     const response = await callable(payload ?? {});
     return response.data;
   },
