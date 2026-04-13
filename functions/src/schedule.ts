@@ -745,12 +745,12 @@ async function resolveMediaMetadata(mediaIds: string[]) {
     mediaMap.set(mediaId, {
       id: mediaDoc.id,
       title: typeof data.title === 'string' ? data.title : null,
-      source: typeof data.sourceType === 'string' ? data.sourceType : null,
-      url: typeof data.publicUrl === 'string'
+      sourceType: typeof data.sourceType === 'string' ? data.sourceType : null,
+      mediaType: typeof data.mediaType === 'string' ? data.mediaType : null,
+      youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : null,
+      publicUrl: typeof data.publicUrl === 'string'
         ? data.publicUrl
-        : (typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null),
-      duration: Number.isFinite(Number(data.durationSeconds)) ? Number(data.durationSeconds) : null,
-      mediaType: typeof data.mediaType === 'string' ? data.mediaType : null
+        : (typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null)
     });
   }));
 
@@ -758,6 +758,7 @@ async function resolveMediaMetadata(mediaIds: string[]) {
 }
 
 export async function resolveNowPlaying(nowIso?: string | null) {
+  const institution = { id: 'irmao-aureo', slug: 'irmao-aureo', name: 'Irmão Áureo' };
   const now = nowIso ? new Date(nowIso) : new Date();
   if (Number.isNaN(now.getTime())) {
     throw new HttpsError('invalid-argument', 'Campo now inválido. Use ISO-8601.');
@@ -786,7 +787,7 @@ export async function resolveNowPlaying(nowIso?: string | null) {
   });
 
   if (!activeBlock) {
-    return { nowPlaying: null, upNext: [] };
+    return { institution, nowPlaying: null, upNext: [] };
   }
 
   const blockItemsSnapshot = await getDb()
@@ -812,7 +813,7 @@ export async function resolveNowPlaying(nowIso?: string | null) {
     .filter((item) => item.isEnabled !== false && Number(item.durationSeconds ?? 0) > 0);
 
   if (!enabledItems.length) {
-    return { nowPlaying: null, upNext: [] };
+    return { institution, nowPlaying: null, upNext: [] };
   }
 
   const blockStartSeconds = hhmmToSeconds(String(activeBlock.startTime ?? '00:00'));
@@ -830,7 +831,7 @@ export async function resolveNowPlaying(nowIso?: string | null) {
   }
 
   if (currentIndex < 0) {
-    return { nowPlaying: null, upNext: [] };
+    return { institution, nowPlaying: null, upNext: [] };
   }
 
   const currentAndNext = enabledItems.slice(currentIndex, currentIndex + 6);
@@ -850,19 +851,36 @@ export async function resolveNowPlaying(nowIso?: string | null) {
     return {
       id: item.id,
       title: (metadata?.title as string | null) ?? (typeof item.mediaTitle === 'string' ? item.mediaTitle : null) ?? (typeof item.notes === 'string' ? item.notes : 'Sem título'),
-      source: (metadata?.source as string | null) ?? (typeof item.sourceType === 'string' ? item.sourceType : null),
-      url: (metadata?.url as string | null) ?? null,
-      duration: Number(item.durationSeconds ?? 0),
       mediaId: typeof item.mediaId === 'string' ? item.mediaId : null,
+      sourceType: (metadata?.sourceType as string | null) ?? (typeof item.sourceType === 'string' ? item.sourceType : null),
       mediaType: (metadata?.mediaType as string | null) ?? null,
+      youtubeVideoId: (metadata?.youtubeVideoId as string | null) ?? null,
+      publicUrl: (metadata?.publicUrl as string | null) ?? null,
       startTime: `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}`
     };
   });
 
-  const nowPlaying = timelineItems[currentIndex] ?? null;
-  const upNext = timelineItems.slice(currentIndex + 1, currentIndex + 6);
+  const currentItem = timelineItems[currentIndex] ?? null;
+  const nowPlaying = currentItem ? {
+    source: currentItem.sourceType ?? 'YOUTUBE',
+    title: currentItem.title,
+    media: {
+      id: currentItem.mediaId ?? currentItem.id,
+      title: currentItem.title,
+      sourceType: currentItem.sourceType ?? 'YOUTUBE',
+      mediaType: currentItem.mediaType ?? 'UNKNOWN',
+      youtubeVideoId: currentItem.youtubeVideoId,
+      publicUrl: currentItem.publicUrl
+    }
+  } : null;
+  const upNext = timelineItems.slice(currentIndex + 1, currentIndex + 6).map((item) => ({
+    id: item.id,
+    title: item.title,
+    startTime: item.startTime
+  }));
 
   return {
+    institution,
     nowPlaying,
     upNext
   };
