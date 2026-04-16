@@ -53,9 +53,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isNowPlayingUpNextItem(value: unknown): value is NowPlayingUpNextItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.id === 'string' && typeof value.title === 'string' && typeof value.startTime === 'string';
+}
+
 function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
   const record = isRecord(payload) ? payload : {};
-  const upNext = Array.isArray(record.upNext) ? (record.upNext as NowPlayingUpNextItem[]) : EMPTY_UPCOMING;
+  const upNext = Array.isArray(record.upNext) ? record.upNext.filter(isNowPlayingUpNextItem) : EMPTY_UPCOMING;
   const institution = isRecord(record.institution)
     ? (record.institution as NowPlayingResponse['institution'])
     : { id: '', slug: '', name: '' };
