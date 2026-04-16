@@ -113,20 +113,22 @@ function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
 
 export function useNowPlaying() {
   const loader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
+  const mapNowPlaying = useCallback((response: NowPlayingResponse) => response.nowPlaying, []);
 
   return useApiResource(loader, {
     initialData: null as NowPlayingResponse['nowPlaying'] | null,
-    mapData: (response: NowPlayingResponse) => response.nowPlaying,
+    mapData: mapNowPlaying,
     fallbackMessage: 'Não foi possível carregar o conteúdo atual.'
   });
 }
 
 export function useUpcomingQueue() {
   const loader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
+  const mapUpNext = useCallback((response: NowPlayingResponse): NowPlayingUpNextItem[] => response.upNext, []);
 
   return useApiResource(loader, {
     initialData: EMPTY_UPCOMING,
-    mapData: (response: NowPlayingResponse): NowPlayingUpNextItem[] => response.upNext,
+    mapData: mapUpNext,
     fallbackMessage: 'Não foi possível carregar a fila de próximos conteúdos.'
   });
 }
