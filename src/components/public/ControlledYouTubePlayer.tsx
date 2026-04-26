@@ -30,19 +30,35 @@ interface YTPlayerEvent {
   data: number;
 }
 
+interface YTPlayerErrorEvent {
+  target: YTPlayer;
+  data: number;
+}
+
 interface YTPlayerOptions {
   videoId: string;
   playerVars: Record<string, number>;
   events: {
     onReady: (event: YTPlayerEvent) => void;
     onStateChange: (event: YTPlayerEvent) => void;
+    onError: (event: YTPlayerErrorEvent) => void;
   };
+}
+
+export interface YouTubePlayerDiagnostics {
+  playerReady: boolean;
+  playerState: number | null;
+  errorCode: number | null;
+  usingFallbackIframe: boolean;
+  errorMessage: string | null;
 }
 
 interface ControlledYouTubePlayerProps {
   title: string;
   videoIdOrUrl: string;
   broadcastStrictMode?: boolean;
+  debugMode?: boolean;
+  onDiagnosticsChange?: (diagnostics: YouTubePlayerDiagnostics) => void;
 }
 
 let youtubeApiPromise: Promise<void> | null = null;
@@ -86,16 +102,49 @@ function shouldBlockKey(key: string) {
   return [' ', 'Spacebar', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight'].includes(key);
 }
 
-export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMode = true }: ControlledYouTubePlayerProps) {
+function getYouTubeErrorMessage(errorCode: number | null) {
+  switch (errorCode) {
+    case 2:
+      return 'Parâmetro inválido para o player do YouTube (erro 2).';
+    case 5:
+      return 'Falha no player HTML5 do YouTube (erro 5).';
+    case 100:
+      return 'Vídeo removido ou privado (erro 100).';
+    case 101:
+    case 150:
+      return 'Este vídeo não permite reprodução incorporada. Escolha outra mídia.';
+    default:
+      return null;
+  }
+}
+
+export function ControlledYouTubePlayer({
+  title,
+  videoIdOrUrl,
+  broadcastStrictMode = true,
+  onDiagnosticsChange
+}: ControlledYouTubePlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [playerState, setPlayerState] = useState<number | null>(null);
+  const [errorCode, setErrorCode] = useState<number | null>(null);
+  const [usingFallbackIframe, setUsingFallbackIframe] = useState(false);
+  const playerReadyRef = useRef(false);
   const containerId = useMemo(() => `yt-broadcast-${Math.random().toString(36).slice(2)}`, []);
   const videoId = useMemo(() => getYouTubeVideoId(videoIdOrUrl), [videoIdOrUrl]);
 
-  if (import.meta.env.DEV) {
-    console.debug('[ControlledYouTubePlayer]', { videoId, videoIdOrUrl, broadcastStrictMode });
-  }
+  const errorMessage = useMemo(() => getYouTubeErrorMessage(errorCode), [errorCode]);
+
+  useEffect(() => {
+    onDiagnosticsChange?.({
+      playerReady: isPlayerReady,
+      playerState,
+      errorCode,
+      usingFallbackIframe,
+      errorMessage
+    });
+  }, [errorCode, errorMessage, isPlayerReady, onDiagnosticsChange, playerState, usingFallbackIframe]);
 
   useEffect(() => {
     if (!videoId || !containerRef.current) {
@@ -104,6 +153,16 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
 
     let active = true;
     setIsPlayerReady(false);
+    playerReadyRef.current = false;
+    setPlayerState(null);
+    setErrorCode(null);
+    setUsingFallbackIframe(false);
+
+    const fallbackTimer = window.setTimeout(() => {
+      if (active && !playerReadyRef.current) {
+        setUsingFallbackIframe(true);
+      }
+    }, 5_000);
 
     ensureYoutubeApi().then(() => {
       if (!active || !window.YT?.Player || !containerRef.current) {
@@ -115,17 +174,19 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
         videoId,
         playerVars: {
           autoplay: 1,
-          controls: 0,
+          controls: 1,
           disablekb: 1,
           modestbranding: 1,
           rel: 0,
-          fs: 0,
+          fs: 1,
           playsinline: 1,
           mute: 1
         },
         events: {
           onReady: (event) => {
             setIsPlayerReady(true);
+            playerReadyRef.current = true;
+            setUsingFallbackIframe(false);
             event.target.mute();
             event.target.playVideo();
 
@@ -134,6 +195,8 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
             }
           },
           onStateChange: (event) => {
+            setPlayerState(event.data);
+
             if (!broadcastStrictMode) {
               return;
             }
@@ -148,6 +211,12 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
             if (state === ytState.PAUSED || state === ytState.CUED || state === ytState.ENDED) {
               event.target.playVideo();
             }
+          },
+          onError: (event) => {
+            setErrorCode(event.data);
+            if (event.data === 2 || event.data === 5) {
+              setUsingFallbackIframe(true);
+            }
           }
         }
       });
@@ -155,6 +224,7 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
 
     return () => {
       active = false;
+      window.clearTimeout(fallbackTimer);
       playerRef.current?.destroy();
       playerRef.current = null;
       setIsPlayerReady(false);
@@ -186,7 +256,7 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
 
   return (
     <div
-      className="relative overflow-hidden rounded-xl border bg-black"
+      className="relative w-full aspect-video overflow-hidden rounded-xl bg-black"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDownCapture={(event) => {
         if (broadcastStrictMode && shouldBlockKey(event.key)) {
@@ -195,8 +265,17 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
         }
       }}
     >
-      <div ref={containerRef} className="aspect-video w-full" id={containerId} aria-label={title} />
-      {broadcastStrictMode && isPlayerReady ? <div className="absolute inset-0 z-10 cursor-default bg-transparent" aria-hidden="true" /> : null}
+      {usingFallbackIframe ? (
+        <iframe
+          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0`}
+          className="absolute inset-0 h-full w-full"
+          allow="autoplay; encrypted-media; fullscreen"
+          allowFullScreen
+          title={title}
+        />
+      ) : (
+        <div ref={containerRef} className="absolute inset-0 h-full w-full" id={containerId} aria-label={title} />
+      )}
     </div>
   );
 }
