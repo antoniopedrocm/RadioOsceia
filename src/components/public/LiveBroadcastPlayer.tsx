@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NowPlayingResponse } from '@/types/api';
 import { getYouTubeVideoId } from '@/lib/youtube';
-import { ControlledYouTubePlayer } from '@/components/public/ControlledYouTubePlayer';
+import { ControlledYouTubePlayer, type YouTubePlayerDiagnostics } from '@/components/public/ControlledYouTubePlayer';
 
 interface LiveBroadcastPlayerProps {
   nowPlaying: NowPlayingResponse['nowPlaying'] | null;
   broadcastStrictMode?: boolean;
+  debugMode?: boolean;
 }
 
 interface HtmlBroadcastPlayerProps {
@@ -108,39 +109,94 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
   );
 }
 
-export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true }: LiveBroadcastPlayerProps) {
+export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, debugMode = false }: LiveBroadcastPlayerProps) {
   const media = nowPlaying?.media;
+  const [forcePublicTestVideo, setForcePublicTestVideo] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<YouTubePlayerDiagnostics>({
+    playerReady: false,
+    playerState: null,
+    errorCode: null,
+    usingFallbackIframe: false,
+    errorMessage: null
+  });
 
   const playbackKey = useMemo(() => {
     if (!media) {
       return 'empty';
     }
 
-    return [media.id, media.youtubeVideoId, media.publicUrl, media.embedUrl].filter(Boolean).join(':');
-  }, [media]);
+    return [media.id, media.youtubeVideoId, media.publicUrl, media.embedUrl, String(forcePublicTestVideo)].filter(Boolean).join(':');
+  }, [forcePublicTestVideo, media]);
 
   if (!media) {
     return <p className="text-xs text-muted-foreground">Nenhuma mídia disponível para transmissão.</p>;
   }
 
-  const youtubeId = getYouTubeVideoId(media.youtubeVideoId ?? '') ?? getYouTubeVideoId(media.youtubeUrl ?? '') ?? getYouTubeVideoId(media.embedUrl ?? '');
+  const resolvedYoutubeId =
+    getYouTubeVideoId(media.youtubeVideoId ?? '') ?? getYouTubeVideoId(media.youtubeUrl ?? '') ?? getYouTubeVideoId(media.embedUrl ?? '');
 
-  if (media.sourceType === 'YOUTUBE' && youtubeId) {
-    return <ControlledYouTubePlayer key={playbackKey} title={media.title} videoIdOrUrl={youtubeId} broadcastStrictMode={broadcastStrictMode} />;
-  }
+  const youtubeId = forcePublicTestVideo ? 'dQw4w9WgXcQ' : resolvedYoutubeId;
+  const embedUrl = youtubeId ? `https://www.youtube.com/embed/${youtubeId}` : null;
 
-  if (media.publicUrl) {
-    return (
-      <HtmlBroadcastPlayer
-        key={playbackKey}
-        src={media.publicUrl}
-        title={media.title}
-        type={isAudioMedia(media.mediaType) ? 'audio' : 'video'}
-        playbackKey={playbackKey}
-        broadcastStrictMode={broadcastStrictMode}
-      />
-    );
-  }
+  return (
+    <div className="space-y-2">
+      {media.sourceType === 'YOUTUBE' && youtubeId ? (
+        <ControlledYouTubePlayer
+          key={playbackKey}
+          title={media.title}
+          videoIdOrUrl={youtubeId}
+          broadcastStrictMode={broadcastStrictMode}
+          onDiagnosticsChange={setDiagnostics}
+        />
+      ) : media.publicUrl ? (
+        <HtmlBroadcastPlayer
+          key={playbackKey}
+          src={media.publicUrl}
+          title={media.title}
+          type={isAudioMedia(media.mediaType) ? 'audio' : 'video'}
+          playbackKey={playbackKey}
+          broadcastStrictMode={broadcastStrictMode}
+        />
+      ) : (
+        <p className="text-xs text-muted-foreground">Formato de mídia atual não possui fonte reproduzível.</p>
+      )}
 
-  return <p className="text-xs text-muted-foreground">Formato de mídia atual não possui fonte reproduzível.</p>;
+      {debugMode ? (
+        <div className="rounded-md border border-amber-400/40 bg-amber-50/70 p-2 text-xs text-amber-900">
+          <p>
+            <strong>VIDEO ID:</strong> {youtubeId ?? 'null'}
+          </p>
+          <p>
+            <strong>SOURCE TYPE:</strong> {media.sourceType}
+          </p>
+          <p>
+            <strong>YOUTUBE URL:</strong> {media.youtubeUrl ?? 'null'}
+          </p>
+          <p>
+            <strong>EMBED URL:</strong> {embedUrl ?? media.embedUrl ?? 'null'}
+          </p>
+          <p>
+            <strong>READY:</strong> {String(diagnostics.playerReady)}
+          </p>
+          <p>
+            <strong>STATE:</strong> {diagnostics.playerState ?? 'null'}
+          </p>
+          <p>
+            <strong>ERROR:</strong> {diagnostics.errorCode ?? 'null'}
+          </p>
+          <p>
+            <strong>FALLBACK IFRAME:</strong> {String(diagnostics.usingFallbackIframe)}
+          </p>
+          {diagnostics.errorMessage ? <p className="font-medium text-red-700">{diagnostics.errorMessage}</p> : null}
+          <button
+            type="button"
+            className="mt-2 rounded border border-amber-600 px-2 py-1 text-xs font-medium"
+            onClick={() => setForcePublicTestVideo((value) => !value)}
+          >
+            {forcePublicTestVideo ? 'Voltar para mídia cadastrada' : 'Testar vídeo público conhecido'}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 }

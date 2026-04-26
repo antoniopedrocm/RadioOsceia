@@ -22,8 +22,8 @@ export function getYouTubeVideoId(value: string): string | null {
     const parsed = new URL(normalized);
     const host = parsed.hostname.replace('www.', '');
 
-    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
-      const byQuery = parsed.searchParams.get('v');
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com' || host === 'youtube-nocookie.com') {
+      const byQuery = parsed.searchParams.get('v') ?? parsed.searchParams.get('vi');
       if (byQuery && VIDEO_ID_PATTERN.test(byQuery)) {
         return byQuery;
       }
@@ -50,16 +50,16 @@ export function getYouTubeVideoId(value: string): string | null {
 function extractFromPath(pathname: string) {
   const segments = pathname.split('/').filter(Boolean);
 
-  if (segments[0] === 'shorts' && segments[1]) {
+  if (!segments.length) {
+    return null;
+  }
+
+  if ((segments[0] === 'shorts' || segments[0] === 'embed' || segments[0] === 'v' || segments[0] === 'live') && segments[1]) {
     return segments[1];
   }
 
-  if (segments.length === 1 && VIDEO_ID_PATTERN.test(segments[0])) {
+  if (VIDEO_ID_PATTERN.test(segments[0])) {
     return segments[0];
-  }
-
-  if (segments[0] === 'embed' && segments[1]) {
-    return segments[1];
   }
 
   return null;
