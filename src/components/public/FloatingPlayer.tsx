@@ -1,14 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNowPlaying, useUpcomingQueue } from '@/hooks/useRadioData';
-import { MediaPlayer } from '@/components/public/MediaPlayer';
+import { LiveBroadcastPlayer } from '@/components/public/LiveBroadcastPlayer';
 
 export function FloatingPlayer() {
   const [expanded, setExpanded] = useState(false);
-  const { data: nowPlaying } = useNowPlaying();
+  const { data: nowPlaying, reload } = useNowPlaying();
   const { data: upNext } = useUpcomingQueue();
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      reload();
+    }, 30_000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [reload]);
 
   const hasActiveMedia = nowPlaying?.media != null;
   const currentTitle = nowPlaying?.media?.title ?? nowPlaying?.title ?? 'Nenhuma transmissão no momento';
@@ -37,11 +47,11 @@ export function FloatingPlayer() {
 
         {expanded && (
           <>
-            <MediaPlayer nowPlaying={nowPlaying} />
+            <LiveBroadcastPlayer nowPlaying={nowPlaying} broadcastStrictMode />
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 <Radio className="h-3 w-3 text-destructive" />
-                {hasActiveMedia ? 'Ao vivo agora' : 'Sem transmissão ativa'}
+                {hasActiveMedia ? 'Transmissão ao vivo' : 'Sem transmissão ativa'}
               </span>
               <span>
                 {hasActiveMedia
