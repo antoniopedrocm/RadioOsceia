@@ -100,6 +100,8 @@ function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
           sourceType,
           mediaType,
           youtubeVideoId: typeof legacyFlatNowPlaying.youtubeVideoId === 'string' ? legacyFlatNowPlaying.youtubeVideoId : null,
+          youtubeUrl: typeof legacyFlatNowPlaying.youtubeUrl === 'string' ? legacyFlatNowPlaying.youtubeUrl : null,
+          embedUrl: typeof legacyFlatNowPlaying.embedUrl === 'string' ? legacyFlatNowPlaying.embedUrl : null,
           publicUrl: typeof legacyFlatNowPlaying.publicUrl === 'string' ? legacyFlatNowPlaying.publicUrl : null
         }
       },

@@ -7,6 +7,46 @@ export interface ParsedYoutubeMedia {
 
 const VIDEO_ID_PATTERN = /^[a-zA-Z0-9_-]{11}$/;
 
+export function getYouTubeVideoId(value: string): string | null {
+  const normalized = value.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (VIDEO_ID_PATTERN.test(normalized)) {
+    return normalized;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.replace('www.', '');
+
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+      const byQuery = parsed.searchParams.get('v');
+      if (byQuery && VIDEO_ID_PATTERN.test(byQuery)) {
+        return byQuery;
+      }
+
+      const byPath = extractFromPath(parsed.pathname);
+      if (byPath && VIDEO_ID_PATTERN.test(byPath)) {
+        return byPath;
+      }
+    }
+
+    if (host === 'youtu.be') {
+      const byPath = extractFromPath(parsed.pathname);
+      if (byPath && VIDEO_ID_PATTERN.test(byPath)) {
+        return byPath;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function extractFromPath(pathname: string) {
   const segments = pathname.split('/').filter(Boolean);
 
@@ -26,22 +66,7 @@ function extractFromPath(pathname: string) {
 }
 
 export function parseYoutubeUrl(rawUrl: string): ParsedYoutubeMedia {
-  let parsed: URL;
-
-  try {
-    parsed = new URL(rawUrl.trim());
-  } catch {
-    throw new Error('URL do YouTube inválida.');
-  }
-
-  const host = parsed.hostname.replace('www.', '');
-  let videoId: string | null = null;
-
-  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
-    videoId = parsed.searchParams.get('v') ?? extractFromPath(parsed.pathname);
-  } else if (host === 'youtu.be') {
-    videoId = extractFromPath(parsed.pathname);
-  }
+  const videoId = getYouTubeVideoId(rawUrl);
 
   if (!videoId || !VIDEO_ID_PATTERN.test(videoId)) {
     throw new Error('Não foi possível extrair o ID do vídeo do YouTube.');
