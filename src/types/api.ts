@@ -17,6 +17,8 @@ export interface NowPlayingResponse {
       sourceType: string;
       mediaType: string;
       youtubeVideoId?: string | null;
+      youtubeUrl?: string | null;
+      embedUrl?: string | null;
       publicUrl?: string | null;
     };
   } | null;
