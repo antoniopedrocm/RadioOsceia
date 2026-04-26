@@ -174,11 +174,11 @@ export function ControlledYouTubePlayer({
         videoId,
         playerVars: {
           autoplay: 1,
-          controls: 1,
+          controls: 0,
           disablekb: 1,
           modestbranding: 1,
           rel: 0,
-          fs: 1,
+          fs: 0,
           playsinline: 1,
           mute: 1
         },
@@ -208,7 +208,7 @@ export function ControlledYouTubePlayer({
               return;
             }
 
-            if (state === ytState.PAUSED || state === ytState.CUED || state === ytState.ENDED) {
+            if (state === ytState.PAUSED || state === ytState.CUED || state === ytState.ENDED || state === ytState.BUFFERING) {
               event.target.playVideo();
             }
           },
@@ -267,7 +267,7 @@ export function ControlledYouTubePlayer({
     >
       {usingFallbackIframe ? (
         <iframe
-          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0`}
+          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&controls=0&fs=0&rel=0`}
           className="absolute inset-0 h-full w-full"
           allow="autoplay; encrypted-media; fullscreen"
           allowFullScreen

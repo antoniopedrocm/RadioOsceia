@@ -28,6 +28,7 @@ function shouldBlockKey(key: string) {
 function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMode }: HtmlBroadcastPlayerProps) {
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const lastAllowedTimeRef = useRef(0);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   useEffect(() => {
     const mediaElement = mediaRef.current;
@@ -36,8 +37,19 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
     }
 
     mediaElement.load();
-    mediaElement.play().catch(() => undefined);
-  }, [playbackKey]);
+    mediaElement
+      .play()
+      .then(() => {
+        setPlaybackError(null);
+        if (!broadcastStrictMode) {
+          mediaElement.muted = false;
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Falha ao iniciar reprodução automática.';
+        setPlaybackError(message);
+      });
+  }, [broadcastStrictMode, playbackKey]);
 
   useEffect(() => {
     if (!broadcastStrictMode) {
@@ -61,11 +73,17 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
   const sharedProps = {
     src,
     autoPlay: true,
-    muted: false,
+    muted: true,
+    playsInline: true,
     controls: !broadcastStrictMode,
     disablePictureInPicture: broadcastStrictMode,
     controlsList: broadcastStrictMode ? 'nodownload noplaybackrate nofullscreen' : undefined,
-    preload: type === 'audio' ? 'none' : 'metadata',
+    preload: 'auto',
+    onLoadedData: () => {
+      if (!broadcastStrictMode && mediaRef.current) {
+        mediaRef.current.muted = false;
+      }
+    },
     onPause: () => {
       if (!broadcastStrictMode) {
         return;
@@ -101,13 +119,19 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
     }
   } as const;
 
-  return type === 'audio' ? (
-    // eslint-disable-next-line jsx-a11y/media-has-caption
-    <audio ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="w-full" />
-  ) : (
-    <video ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="aspect-video w-full rounded-md bg-black" />
+  return (
+    <div className="space-y-1">
+      {type === 'audio' ? (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <audio ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="w-full" />
+      ) : (
+        <video ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="aspect-video w-full rounded-md bg-black" />
+      )}
+      {playbackError ? <p className="text-xs text-red-600">{playbackError}</p> : null}
+    </div>
   );
 }
+
 
 export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, debugMode = false }: LiveBroadcastPlayerProps) {
   const media = nowPlaying?.media;
