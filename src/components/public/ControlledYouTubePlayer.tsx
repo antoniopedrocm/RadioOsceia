@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getYouTubeVideoId } from '@/lib/youtube';
 
 declare global {
@@ -22,6 +22,7 @@ interface YTPlayer {
   destroy: () => void;
   playVideo: () => void;
   unMute: () => void;
+  mute: () => void;
 }
 
 interface YTPlayerEvent {
@@ -70,6 +71,12 @@ function ensureYoutubeApi() {
       previous?.();
       resolve();
     };
+
+    window.setTimeout(() => {
+      if (window.YT?.Player) {
+        resolve();
+      }
+    }, 1_500);
   });
 
   return youtubeApiPromise;
@@ -82,8 +89,13 @@ function shouldBlockKey(key: string) {
 export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMode = true }: ControlledYouTubePlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YTPlayer | null>(null);
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
   const containerId = useMemo(() => `yt-broadcast-${Math.random().toString(36).slice(2)}`, []);
   const videoId = useMemo(() => getYouTubeVideoId(videoIdOrUrl), [videoIdOrUrl]);
+
+  if (import.meta.env.DEV) {
+    console.debug('[ControlledYouTubePlayer]', { videoId, videoIdOrUrl, broadcastStrictMode });
+  }
 
   useEffect(() => {
     if (!videoId || !containerRef.current) {
@@ -91,6 +103,7 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
     }
 
     let active = true;
+    setIsPlayerReady(false);
 
     ensureYoutubeApi().then(() => {
       if (!active || !window.YT?.Player || !containerRef.current) {
@@ -107,12 +120,18 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
           modestbranding: 1,
           rel: 0,
           fs: 0,
-          playsinline: 1
+          playsinline: 1,
+          mute: 1
         },
         events: {
           onReady: (event) => {
-            event.target.unMute();
+            setIsPlayerReady(true);
+            event.target.mute();
             event.target.playVideo();
+
+            if (!broadcastStrictMode) {
+              event.target.unMute();
+            }
           },
           onStateChange: (event) => {
             if (!broadcastStrictMode) {
@@ -138,6 +157,7 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
       active = false;
       playerRef.current?.destroy();
       playerRef.current = null;
+      setIsPlayerReady(false);
     };
   }, [broadcastStrictMode, containerId, videoId]);
 
@@ -175,8 +195,8 @@ export function ControlledYouTubePlayer({ title, videoIdOrUrl, broadcastStrictMo
         }
       }}
     >
-      <div ref={containerRef} className="aspect-video w-full" id={containerId} style={{ pointerEvents: broadcastStrictMode ? 'none' : 'auto' }} aria-label={title} />
-      {broadcastStrictMode ? <div className="absolute inset-0 z-10 cursor-default bg-transparent" aria-hidden="true" /> : null}
+      <div ref={containerRef} className="aspect-video w-full" id={containerId} aria-label={title} />
+      {broadcastStrictMode && isPlayerReady ? <div className="absolute inset-0 z-10 cursor-default bg-transparent" aria-hidden="true" /> : null}
     </div>
   );
 }
