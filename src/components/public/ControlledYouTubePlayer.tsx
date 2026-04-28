@@ -99,7 +99,7 @@ function ensureYoutubeApi() {
 }
 
 function shouldBlockKey(key: string) {
-  return [' ', 'Spacebar', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight'].includes(key);
+  return [' ', 'Spacebar', 'k', 'K', 'j', 'J', 'l', 'L', 'f', 'F', 'm', 'M', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key);
 }
 
 function getYouTubeErrorMessage(errorCode: number | null) {
@@ -176,9 +176,9 @@ export function ControlledYouTubePlayer({
           autoplay: 1,
           controls: 0,
           disablekb: 1,
-          modestbranding: 1,
-          rel: 0,
           fs: 0,
+          rel: 0,
+          modestbranding: 1,
           playsinline: 1,
           mute: 1
         },
@@ -208,7 +208,7 @@ export function ControlledYouTubePlayer({
               return;
             }
 
-            if (state === ytState.PAUSED || state === ytState.CUED || state === ytState.ENDED || state === ytState.BUFFERING) {
+            if (state === ytState.PAUSED || state === ytState.CUED || state === ytState.ENDED) {
               event.target.playVideo();
             }
           },
@@ -256,7 +256,7 @@ export function ControlledYouTubePlayer({
 
   return (
     <div
-      className="relative w-full aspect-video overflow-hidden rounded-xl bg-black"
+      className="relative aspect-video w-full overflow-hidden rounded-xl"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDownCapture={(event) => {
         if (broadcastStrictMode && shouldBlockKey(event.key)) {
@@ -267,7 +267,7 @@ export function ControlledYouTubePlayer({
     >
       {usingFallbackIframe ? (
         <iframe
-          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&controls=0&fs=0&rel=0`}
+          src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&rel=0&playsinline=1`}
           className="absolute inset-0 h-full w-full"
           allow="autoplay; encrypted-media; fullscreen"
           allowFullScreen
@@ -276,6 +276,22 @@ export function ControlledYouTubePlayer({
       ) : (
         <div ref={containerRef} className="absolute inset-0 h-full w-full" id={containerId} aria-label={title} />
       )}
+
+      {broadcastStrictMode ? (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-10 bg-transparent"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            playerRef.current?.playVideo();
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

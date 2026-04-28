@@ -22,7 +22,24 @@ function isAudioMedia(mediaType: string) {
 }
 
 function shouldBlockKey(key: string) {
-  return [' ', 'Spacebar', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight'].includes(key);
+  return [' ', 'Spacebar', 'k', 'K', 'j', 'J', 'l', 'L', 'f', 'F', 'm', 'M', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(key);
+}
+
+function containsYouTubeUrl(value?: string | null) {
+  if (!value) {
+    return false;
+  }
+
+  return /(?:youtube\.com|youtu\.be)/i.test(value);
+}
+
+function isDirectFilePlaybackUrl(value?: string | null) {
+  if (!value) {
+    return false;
+  }
+
+  const pathname = value.split('?')[0]?.toLowerCase() ?? '';
+  return ['.mp4', '.webm', '.mp3', '.m4a'].some((extension) => pathname.endsWith(extension));
 }
 
 function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMode }: HtmlBroadcastPlayerProps) {
@@ -157,14 +174,21 @@ export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, de
   }
 
   const resolvedYoutubeId =
-    getYouTubeVideoId(media.youtubeVideoId ?? '') ?? getYouTubeVideoId(media.youtubeUrl ?? '') ?? getYouTubeVideoId(media.embedUrl ?? '');
+    getYouTubeVideoId(media.youtubeVideoId ?? '') ?? getYouTubeVideoId(media.youtubeUrl ?? '') ?? getYouTubeVideoId(media.embedUrl ?? '') ?? getYouTubeVideoId(media.publicUrl ?? '');
+
+  const isYoutubeMedia =
+    media.sourceType === 'YOUTUBE' ||
+    containsYouTubeUrl(media.youtubeUrl) ||
+    containsYouTubeUrl(media.embedUrl) ||
+    containsYouTubeUrl(media.publicUrl) ||
+    containsYouTubeUrl(media.youtubeVideoId);
 
   const youtubeId = forcePublicTestVideo ? 'dQw4w9WgXcQ' : resolvedYoutubeId;
   const embedUrl = youtubeId ? `https://www.youtube.com/embed/${youtubeId}` : null;
 
   return (
     <div className="space-y-2">
-      {media.sourceType === 'YOUTUBE' && youtubeId ? (
+      {isYoutubeMedia && youtubeId ? (
         <ControlledYouTubePlayer
           key={playbackKey}
           title={media.title}
@@ -172,7 +196,7 @@ export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, de
           broadcastStrictMode={broadcastStrictMode}
           onDiagnosticsChange={setDiagnostics}
         />
-      ) : media.publicUrl ? (
+      ) : media.publicUrl && isDirectFilePlaybackUrl(media.publicUrl) ? (
         <HtmlBroadcastPlayer
           key={playbackKey}
           src={media.publicUrl}

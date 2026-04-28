@@ -29,6 +29,7 @@ export interface TimelineMedia {
   embedUrl?: string;
   thumbnailUrl?: string;
   durationSeconds?: number;
+  publicUrl?: string | null;
 }
 
 export interface TimelineEntry {
@@ -59,6 +60,8 @@ export interface NowPlayingPayload {
       sourceType: string;
       mediaType: string;
       youtubeVideoId: string | null;
+      youtubeUrl?: string | null;
+      embedUrl?: string | null;
       publicUrl: string | null;
     };
   } | null;
@@ -204,6 +207,8 @@ export async function buildNowPlayingPayload(
   const current = timelineWithMinutes[currentIndex];
   const media = await adapter.loadMedia(current.mediaId);
 
+  const resolvedSourceType = normalizeSourceType(media?.sourceType ?? current.sourceType);
+
   return {
     institution: options?.institution ?? defaultInstitution,
     nowPlaying: {
@@ -212,10 +217,12 @@ export async function buildNowPlayingPayload(
       media: {
         id: current.mediaId,
         title: current.title,
-        sourceType: normalizeSourceType(media?.sourceType ?? current.sourceType),
+        sourceType: resolvedSourceType,
         mediaType: String(media?.mediaType ?? 'VIDEO'),
         youtubeVideoId: media?.youtubeVideoId ?? null,
-        publicUrl: media?.youtubeUrl ?? null
+        youtubeUrl: media?.youtubeUrl ?? null,
+        embedUrl: media?.embedUrl ?? null,
+        publicUrl: resolvedSourceType === 'YOUTUBE' ? null : (media?.publicUrl ?? null)
       }
     },
     upNext: timelineWithMinutes.slice(currentIndex + 1, currentIndex + 6).map((item) => ({
