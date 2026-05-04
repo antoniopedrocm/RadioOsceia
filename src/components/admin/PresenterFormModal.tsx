@@ -29,6 +29,9 @@ export function PresenterFormModal({
   onSubmit
 }: PresenterFormModalProps) {
   const [form, setForm] = useState<PresenterFormValues>(initialForm);
+  const [photoMode, setPhotoMode] = useState<'url' | 'upload'>('url');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadPreviewUrl, setUploadPreviewUrl] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -50,7 +53,21 @@ export function PresenterFormModal({
 
     setFormError(null);
     setIsSubmitting(false);
+    setUploadFile(null);
+    setUploadPreviewUrl('');
+    setPhotoMode('url');
   }, [initialPresenter, isOpen, mode]);
+
+  useEffect(() => {
+    if (!uploadFile) {
+      setUploadPreviewUrl('');
+      return;
+    }
+
+    const nextPreview = URL.createObjectURL(uploadFile);
+    setUploadPreviewUrl(nextPreview);
+    return () => URL.revokeObjectURL(nextPreview);
+  }, [uploadFile]);
 
   if (!isOpen) {
     return null;
@@ -70,10 +87,21 @@ export function PresenterFormModal({
     setFormError(null);
 
     try {
+      let nextPhotoUrl = form.photoUrl.trim();
+
+      if (photoMode === 'upload' && uploadFile) {
+        nextPhotoUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+          reader.onerror = () => reject(new Error('Não foi possível processar a imagem enviada.'));
+          reader.readAsDataURL(uploadFile);
+        });
+      }
+
       await onSubmit({
         name: form.name.trim(),
         shortBio: form.shortBio.trim(),
-        photoUrl: form.photoUrl.trim(),
+        photoUrl: nextPhotoUrl,
         status: form.status
       });
     } catch (error) {
@@ -121,14 +149,31 @@ export function PresenterFormModal({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="presenter-photo">URL da foto</Label>
-            <Input
-              id="presenter-photo"
-              value={form.photoUrl}
-              onChange={(event) => updateField('photoUrl', event.target.value)}
-              placeholder="https://..."
-              disabled={isSubmitting}
-            />
+            <div className="flex items-center justify-between">
+              <Label>Foto</Label>
+              <div className="flex gap-2">
+                <Button type="button" variant={photoMode === 'upload' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoMode('upload')} disabled={isSubmitting}>Upload</Button>
+                <Button type="button" variant={photoMode === 'url' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoMode('url')} disabled={isSubmitting}>URL</Button>
+              </div>
+            </div>
+
+            {photoMode === 'url' ? (
+              <Input
+                id="presenter-photo"
+                value={form.photoUrl}
+                onChange={(event) => updateField('photoUrl', event.target.value)}
+                placeholder="https://..."
+                disabled={isSubmitting}
+              />
+            ) : (
+              <Input
+                id="presenter-photo-upload"
+                type="file"
+                accept="image/*"
+                onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                disabled={isSubmitting}
+              />
+            )}
           </div>
 
           <div className="space-y-2">
@@ -142,9 +187,9 @@ export function PresenterFormModal({
             />
           </div>
 
-          {form.photoUrl ? (
+          {(photoMode === 'upload' ? uploadPreviewUrl : form.photoUrl) ? (
             <div className="flex items-center gap-3 rounded-lg border bg-slate-50 p-3">
-              <img src={form.photoUrl} alt="" className="h-16 w-16 rounded-full object-cover" />
+              <img src={photoMode === 'upload' ? uploadPreviewUrl : form.photoUrl} alt="" className="h-16 w-16 rounded-full object-cover" />
               <p className="text-sm text-muted-foreground">Prévia da foto cadastrada.</p>
             </div>
           ) : null}
