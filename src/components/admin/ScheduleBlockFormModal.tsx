@@ -19,6 +19,7 @@ export interface ProgramOption {
 export interface MediaOption {
   id: string;
   title: string;
+  programId?: string | null;
   durationSeconds?: number | null;
 }
 
@@ -72,6 +73,7 @@ export function ScheduleBlockFormModal({
   const [recurrenceType, setRecurrenceType] = useState<ScheduleRecurrenceType>('NONE');
   const [byWeekDays, setByWeekDays] = useState<number[]>([]);
   const [items, setItems] = useState<LocalItem[]>([]);
+  const [autoFilledProgramId, setAutoFilledProgramId] = useState('');
   const [applyScope, setApplyScope] = useState<'THIS' | 'THIS_AND_FUTURE' | 'ALL_IN_GROUP'>('THIS');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -99,6 +101,7 @@ export function ScheduleBlockFormModal({
         notes: item.notes ?? '',
         isEnabled: item.isEnabled
       })));
+      setAutoFilledProgramId('');
     } else {
       setTitle('');
       setDescription('');
@@ -110,6 +113,7 @@ export function ScheduleBlockFormModal({
       setRecurrenceType('NONE');
       setByWeekDays([]);
       setItems([]);
+      setAutoFilledProgramId('');
     }
 
     setApplyScope('THIS');
@@ -117,6 +121,25 @@ export function ScheduleBlockFormModal({
   }, [isOpen, initialBlock]);
 
   const mediaMap = useMemo(() => new Map(mediaOptions.map((media) => [media.id, media])), [mediaOptions]);
+  const programMediaOptions = useMemo(
+    () => mediaOptions.filter((media) => media.programId && media.programId === programId),
+    [mediaOptions, programId]
+  );
+
+  useEffect(() => {
+    if (!isOpen || isReadOnly || !programId || items.length > 0 || autoFilledProgramId === programId || !programMediaOptions.length) {
+      return;
+    }
+
+    setItems(programMediaOptions.map((media) => ({
+      itemType: 'MEDIA',
+      mediaId: media.id,
+      durationSeconds: media.durationSeconds && media.durationSeconds > 0 ? media.durationSeconds : 30,
+      notes: '',
+      isEnabled: true
+    })));
+    setAutoFilledProgramId(programId);
+  }, [autoFilledProgramId, isOpen, isReadOnly, items.length, programId, programMediaOptions]);
 
   if (!isOpen) return null;
 

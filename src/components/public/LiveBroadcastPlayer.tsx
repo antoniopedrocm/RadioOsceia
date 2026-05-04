@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { NowPlayingResponse } from '@/types/api';
 import { getYouTubeVideoId } from '@/lib/youtube';
 import { ControlledYouTubePlayer, type YouTubePlayerDiagnostics } from '@/components/public/ControlledYouTubePlayer';
+import { BroadcastPlayerControls } from '@/components/public/BroadcastPlayerControls';
 
 interface LiveBroadcastPlayerProps {
   nowPlaying: NowPlayingResponse['nowPlaying'] | null;
@@ -14,6 +15,8 @@ interface HtmlBroadcastPlayerProps {
   title: string;
   type: 'audio' | 'video';
   playbackKey: string;
+  scheduledStartAt?: string | null;
+  initialStartSeconds?: number;
   broadcastStrictMode: boolean;
 }
 
@@ -42,10 +45,35 @@ function isDirectFilePlaybackUrl(value?: string | null) {
   return ['.mp4', '.webm', '.mp3', '.m4a'].some((extension) => pathname.endsWith(extension));
 }
 
-function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMode }: HtmlBroadcastPlayerProps) {
+function resolveInitialStartSeconds(scheduledStartAt?: string | null, fallbackSeconds = 0) {
+  const scheduledStartMs = scheduledStartAt ? Date.parse(scheduledStartAt) : Number.NaN;
+  if (Number.isFinite(scheduledStartMs)) {
+    return Math.max(0, Math.floor((Date.now() - scheduledStartMs) / 1000));
+  }
+
+  return Math.max(0, Math.floor(fallbackSeconds));
+}
+
+function normalizePlaybackInstant(value?: string | null) {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(timestamp) ? String(Math.floor(timestamp / 1000)) : '';
+}
+
+function HtmlBroadcastPlayer({
+  src,
+  title,
+  type,
+  playbackKey,
+  scheduledStartAt,
+  initialStartSeconds = 0,
+  broadcastStrictMode
+}: HtmlBroadcastPlayerProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const lastAllowedTimeRef = useRef(0);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     const mediaElement = mediaRef.current;
@@ -53,13 +81,27 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
       return;
     }
 
+    const startSeconds = resolveInitialStartSeconds(scheduledStartAt, initialStartSeconds);
+    lastAllowedTimeRef.current = startSeconds;
     mediaElement.load();
+    mediaElement.muted = isMuted;
+    if (startSeconds > 0) {
+      try {
+        mediaElement.currentTime = startSeconds;
+      } catch {
+        const seekOnMetadata = () => {
+          mediaElement.currentTime = startSeconds;
+        };
+        mediaElement.addEventListener('loadedmetadata', seekOnMetadata, { once: true });
+      }
+    }
     mediaElement
       .play()
       .then(() => {
         setPlaybackError(null);
         if (!broadcastStrictMode) {
           mediaElement.muted = false;
+          setIsMuted(false);
         }
       })
       .catch((error: unknown) => {
@@ -67,6 +109,43 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
         setPlaybackError(message);
       });
   }, [broadcastStrictMode, playbackKey]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreen(document.fullscreenElement === wrapperRef.current);
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+    };
+  }, []);
+
+  const handleToggleMute = () => {
+    setIsMuted((current) => {
+      const nextMuted = !current;
+      if (mediaRef.current) {
+        mediaRef.current.muted = nextMuted;
+        mediaRef.current.play().catch(() => undefined);
+      }
+      return nextMuted;
+    });
+  };
+
+  const handleToggleFullscreen = () => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    if (document.fullscreenElement === wrapper) {
+      document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+
+    wrapper.requestFullscreen().catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!broadcastStrictMode) {
@@ -90,7 +169,7 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
   const sharedProps = {
     src,
     autoPlay: true,
-    muted: true,
+    muted: isMuted,
     playsInline: true,
     controls: !broadcastStrictMode,
     disablePictureInPicture: broadcastStrictMode,
@@ -138,12 +217,20 @@ function HtmlBroadcastPlayer({ src, title, type, playbackKey, broadcastStrictMod
 
   return (
     <div className="space-y-1">
-      {type === 'audio' ? (
-        // eslint-disable-next-line jsx-a11y/media-has-caption
-        <audio ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="w-full" />
-      ) : (
-        <video ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="aspect-video w-full rounded-md bg-black" />
-      )}
+      <div ref={wrapperRef} className={type === 'video' ? 'relative aspect-video overflow-hidden rounded-xl bg-black' : 'relative rounded-xl bg-black/5 p-3'}>
+        {type === 'audio' ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <audio ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="w-full pt-10" />
+        ) : (
+          <video ref={(node) => (mediaRef.current = node)} {...sharedProps} title={title} className="h-full w-full bg-black object-contain" />
+        )}
+        <BroadcastPlayerControls
+          isMuted={isMuted}
+          isFullscreen={isFullscreen}
+          onToggleMute={handleToggleMute}
+          onToggleFullscreen={type === 'video' ? handleToggleFullscreen : undefined}
+        />
+      </div>
       {playbackError ? <p className="text-xs text-red-600">{playbackError}</p> : null}
     </div>
   );
@@ -166,8 +253,16 @@ export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, de
       return 'empty';
     }
 
-    return [media.id, media.youtubeVideoId, media.publicUrl, media.embedUrl, String(forcePublicTestVideo)].filter(Boolean).join(':');
-  }, [forcePublicTestVideo, media]);
+    return [
+      media.id,
+      nowPlaying?.itemId,
+      normalizePlaybackInstant(nowPlaying?.startedAt),
+      media.youtubeVideoId,
+      media.publicUrl,
+      media.embedUrl,
+      String(forcePublicTestVideo)
+    ].filter(Boolean).join(':');
+  }, [forcePublicTestVideo, media, nowPlaying?.itemId, nowPlaying?.startedAt]);
 
   if (!media) {
     return <p className="text-xs text-muted-foreground">Nenhuma mídia disponível para transmissão.</p>;
@@ -193,6 +288,8 @@ export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, de
           key={playbackKey}
           title={media.title}
           videoIdOrUrl={youtubeId}
+          scheduledStartAt={nowPlaying?.startedAt ?? null}
+          initialStartSeconds={nowPlaying?.playbackOffsetSeconds ?? 0}
           broadcastStrictMode={broadcastStrictMode}
           onDiagnosticsChange={setDiagnostics}
         />
@@ -203,6 +300,8 @@ export function LiveBroadcastPlayer({ nowPlaying, broadcastStrictMode = true, de
           title={media.title}
           type={isAudioMedia(media.mediaType) ? 'audio' : 'video'}
           playbackKey={playbackKey}
+          scheduledStartAt={nowPlaying?.startedAt ?? null}
+          initialStartSeconds={nowPlaying?.playbackOffsetSeconds ?? 0}
           broadcastStrictMode={broadcastStrictMode}
         />
       ) : (

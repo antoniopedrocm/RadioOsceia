@@ -94,6 +94,12 @@ function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
       nowPlaying: {
         source: typeof legacyFlatNowPlaying.source === 'string' ? legacyFlatNowPlaying.source : sourceType,
         title: typeof legacyFlatNowPlaying.title === 'string' ? legacyFlatNowPlaying.title : mediaTitle,
+        itemId: typeof legacyFlatNowPlaying.itemId === 'string' ? legacyFlatNowPlaying.itemId : null,
+        startedAt: typeof legacyFlatNowPlaying.startedAt === 'string' ? legacyFlatNowPlaying.startedAt : null,
+        endsAt: typeof legacyFlatNowPlaying.endsAt === 'string' ? legacyFlatNowPlaying.endsAt : null,
+        playbackOffsetSeconds:
+          typeof legacyFlatNowPlaying.playbackOffsetSeconds === 'number' ? legacyFlatNowPlaying.playbackOffsetSeconds : 0,
+        durationSeconds: typeof legacyFlatNowPlaying.durationSeconds === 'number' ? legacyFlatNowPlaying.durationSeconds : undefined,
         media: {
           id: mediaId,
           title: mediaTitle,
@@ -111,6 +117,19 @@ function normalizeNowPlayingResponse(payload: unknown): NowPlayingResponse {
 
   console.warn('[useRadioData] Resposta de nowPlaying inválida; exibindo estado vazio.', payload);
   return { institution, nowPlaying: null, upNext };
+}
+
+export function useNowPlayingResponse() {
+  const loader = useCallback(async (_signal: AbortSignal) => normalizeNowPlayingResponse(await api.getNowPlaying()), []);
+
+  return useApiResource(loader, {
+    initialData: {
+      institution: { id: '', slug: '', name: '' },
+      nowPlaying: null,
+      upNext: EMPTY_UPCOMING
+    } as NowPlayingResponse,
+    fallbackMessage: 'Não foi possível carregar o conteúdo atual.'
+  });
 }
 
 export function useNowPlaying() {

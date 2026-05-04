@@ -54,6 +54,11 @@ export interface NowPlayingPayload {
   nowPlaying: {
     source: string;
     title: string;
+    itemId?: string | null;
+    startedAt?: string | null;
+    endsAt?: string | null;
+    playbackOffsetSeconds?: number;
+    durationSeconds?: number;
     media: {
       id: string;
       title: string;
@@ -65,7 +70,7 @@ export interface NowPlayingPayload {
       publicUrl: string | null;
     };
   } | null;
-  upNext: Array<{ id: string; title: string; startTime: string }>;
+  upNext: Array<{ id: string; title: string; startTime: string; startsAt?: string | null; endsAt?: string | null }>;
 }
 
 export interface DashboardSummary {
