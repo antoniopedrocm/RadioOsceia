@@ -1,18 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Pencil, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
 import { PageHeader } from '@/components/admin/PageHeader';
-import { PresenterFormModal } from '@/components/admin/PresenterFormModal';
-import { EmptyState, LoadingState } from '@/components/shared/LoadableMessage';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useApiResource } from '@/hooks/useApiResource';
-import { api, getApiErrorMessage } from '@/lib/api';
-import type { AdminPresenterRecord, PresenterFormValues } from '@/types/presenter';
 
 type Presenter = {
   name: string;
@@ -36,7 +29,7 @@ const initialPresenters: Presenter[] = [
   }
 ];
 
-function AdminApresentadoresPageLocal() {
+export function AdminApresentadoresPage() {
   const [presenters, setPresenters] = useState(initialPresenters);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [name, setName] = useState('');
@@ -45,13 +38,23 @@ function AdminApresentadoresPageLocal() {
   const [photoMode, setPhotoMode] = useState<'url' | 'upload'>('url');
   const [photoUrl, setPhotoUrl] = useState('');
   const [uploadedPhoto, setUploadedPhoto] = useState<File | null>(null);
+  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState('');
 
-  const previewImage = useMemo(() => {
-    if (photoMode === 'upload' && uploadedPhoto) {
-      return URL.createObjectURL(uploadedPhoto);
+  useEffect(() => {
+    if (!uploadedPhoto) {
+      setUploadedPreviewUrl('');
+      return;
     }
-    return photoUrl;
-  }, [photoMode, photoUrl, uploadedPhoto]);
+
+    const nextUrl = URL.createObjectURL(uploadedPhoto);
+    setUploadedPreviewUrl(nextUrl);
+
+    return () => {
+      URL.revokeObjectURL(nextUrl);
+    };
+  }, [uploadedPhoto]);
+
+  const previewImage = photoMode === 'upload' ? uploadedPreviewUrl : photoUrl;
 
   const closeModal = () => {
     setEditingIndex(null);
@@ -151,12 +154,11 @@ function AdminApresentadoresPageLocal() {
                       accept="image/*"
                       onChange={(event) => setUploadedPhoto(event.target.files?.[0] ?? null)}
                     />
+                    <p className="text-xs text-muted-foreground">Selecione JPG ou PNG. Nesta fase, a imagem fica no frontend (sem envio para servidor).</p>
                   </div>
                 )}
 
-                {previewImage ? (
-                  <img src={previewImage} alt="Pré-visualização da foto" className="h-24 w-24 rounded-full object-cover" />
-                ) : null}
+                {previewImage ? <img src={previewImage} alt="Pré-visualização da foto" className="h-24 w-24 rounded-full object-cover" /> : null}
               </div>
 
               <div className="space-y-2">
