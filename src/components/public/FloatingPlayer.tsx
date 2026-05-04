@@ -2,13 +2,28 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useNowPlaying, useUpcomingQueue } from '@/hooks/useRadioData';
+import { useNowPlayingResponse } from '@/hooks/useRadioData';
 import { LiveBroadcastPlayer } from '@/components/public/LiveBroadcastPlayer';
+
+function getNextReloadDelayMs(targets: Array<string | null | undefined>) {
+  const now = Date.now();
+  const nextTarget = targets
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter((value) => Number.isFinite(value) && value > now)
+    .sort((a, b) => a - b)[0];
+
+  if (!nextTarget) {
+    return null;
+  }
+
+  return Math.max(250, nextTarget - now + 250);
+}
 
 export function FloatingPlayer() {
   const [expanded, setExpanded] = useState(false);
-  const { data: nowPlaying, reload } = useNowPlaying();
-  const { data: upNext } = useUpcomingQueue();
+  const { data, reload } = useNowPlayingResponse();
+  const nowPlaying = data.nowPlaying;
+  const upNext = data.upNext;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -19,6 +34,21 @@ export function FloatingPlayer() {
       window.clearInterval(timer);
     };
   }, [reload]);
+
+  useEffect(() => {
+    const delayMs = getNextReloadDelayMs([nowPlaying?.endsAt, upNext[0]?.startsAt]);
+    if (delayMs === null) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      reload();
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [nowPlaying?.endsAt, reload, upNext]);
 
   const hasActiveMedia = nowPlaying?.media != null;
   const currentTitle = nowPlaying?.media?.title ?? nowPlaying?.title ?? 'Nenhuma transmissão no momento';

@@ -594,7 +594,8 @@ export async function resolvePlaybackTimeline(nowIso?: string | null) {
     throw new HttpsError('invalid-argument', 'Campo now inválido. Use ISO-8601.');
   }
 
-  const date = now.toISOString().slice(0, 10);
+  const radioNow = resolveRadioDateTimeParts(now);
+  const date = radioNow.date;
   const dayView = await resolveScheduleDayView(date);
 
   const timeline: Array<{
@@ -609,9 +610,25 @@ export async function resolvePlaybackTimeline(nowIso?: string | null) {
   }> = [];
 
   for (const block of dayView.blocks.filter((item) => item.status === 'ACTIVE' && item.isActive)) {
-    const blockStart = combineDateAndTimeToDate(block.date, block.startTime);
-    const blockEnd = combineDateAndTimeToDate(block.date, block.endTime);
-    const enabledItems = block.items.filter((item) => item.isEnabled);
+    const blockStartSeconds = hhmmToSeconds(block.startTime);
+    const blockEndSeconds = hhmmToSeconds(block.endTime);
+    const blockStart = new Date(now.getTime() + ((blockStartSeconds - radioNow.secondsOfDay) * 1000));
+    const blockEnd = new Date(now.getTime() + ((blockEndSeconds - radioNow.secondsOfDay) * 1000));
+    let enabledItems = block.items.filter((item) => item.isEnabled);
+
+    if (!enabledItems.length && block.programId) {
+      const fallbackItems = await loadProgramMediaFallbackItems(block.programId, blockStartSeconds, blockEndSeconds);
+      enabledItems = fallbackItems.map((item, index) => ({
+        id: item.id,
+        order: index + 1,
+        itemType: 'MEDIA' as QueueItemType,
+        mediaId: typeof item.mediaId === 'string' ? item.mediaId : null,
+        mediaTitle: typeof item.mediaTitle === 'string' ? item.mediaTitle : null,
+        durationSeconds: Number(item.durationSeconds ?? 0),
+        notes: typeof item.notes === 'string' ? item.notes : null,
+        isEnabled: true
+      }));
+    }
 
     if (!enabledItems.length) {
       timeline.push({
@@ -748,6 +765,8 @@ async function resolveMediaMetadata(mediaIds: string[]) {
       sourceType: typeof data.sourceType === 'string' ? data.sourceType : null,
       mediaType: typeof data.mediaType === 'string' ? data.mediaType : null,
       youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : null,
+      youtubeUrl: typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null,
+      embedUrl: typeof data.embedUrl === 'string' ? data.embedUrl : null,
       publicUrl: typeof data.publicUrl === 'string'
         ? data.publicUrl
         : (typeof data.youtubeUrl === 'string' ? data.youtubeUrl : null)
@@ -757,47 +776,46 @@ async function resolveMediaMetadata(mediaIds: string[]) {
   return mediaMap;
 }
 
-export async function resolveNowPlaying(nowIso?: string | null) {
-  const institution = { id: 'irmao-aureo', slug: 'irmao-aureo', name: 'Irmão Áureo' };
-  const now = nowIso ? new Date(nowIso) : new Date();
-  if (Number.isNaN(now.getTime())) {
-    throw new HttpsError('invalid-argument', 'Campo now inválido. Use ISO-8601.');
-  }
+interface PlaybackBlock {
+  id: string;
+  status: unknown;
+  isActive: unknown;
+  startTime: unknown;
+  endTime: unknown;
+  programId: unknown;
+}
 
-  const radioNow = resolveRadioDateTimeParts(now);
-  const daySnapshot = await getDb().collection('scheduleBlocks').where('date', '==', radioNow.date).get();
-  const activeBlocks = daySnapshot.docs
-    .map((doc) => {
-      const data = doc.data() ?? {};
-      return {
-        id: doc.id,
-        status: data.status,
-        isActive: data.isActive,
-        startTime: data.startTime,
-        endTime: data.endTime
-      };
-    })
-    .filter((block) => normalizeScheduleStatus(block.status) === 'ACTIVE' && block.isActive !== false)
-    .sort((a, b) => String(a.startTime ?? '').localeCompare(String(b.startTime ?? '')));
+interface EnabledPlaybackItem {
+  id: string;
+  isEnabled: unknown;
+  durationSeconds: unknown;
+  mediaId: unknown;
+  mediaTitle: unknown;
+  notes: unknown;
+  sourceType: unknown;
+}
 
-  const activeBlock = activeBlocks.find((block) => {
-    const startSeconds = hhmmToSeconds(String(block.startTime ?? '00:00'));
-    const endSeconds = hhmmToSeconds(String(block.endTime ?? '00:00'));
-    return radioNow.secondsOfDay >= startSeconds && radioNow.secondsOfDay <= endSeconds;
-  });
+function secondsToHHMM(totalSeconds: number) {
+  const startHour = Math.floor(totalSeconds / 3600) % 24;
+  const startMinute = Math.floor((totalSeconds % 3600) / 60);
+  return `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}`;
+}
 
-  if (!activeBlock) {
-    return { institution, nowPlaying: null, upNext: [] };
-  }
+function addSecondsIso(base: Date, seconds: number) {
+  const date = new Date(base.getTime() + (seconds * 1000));
+  date.setMilliseconds(0);
+  return date.toISOString();
+}
 
+async function loadEnabledPlaybackItems(blockId: string): Promise<EnabledPlaybackItem[]> {
   const blockItemsSnapshot = await getDb()
     .collection('scheduleBlocks')
-    .doc(activeBlock.id)
+    .doc(blockId)
     .collection('items')
     .orderBy('order', 'asc')
     .get();
 
-  const enabledItems = blockItemsSnapshot.docs
+  return blockItemsSnapshot.docs
     .map((doc) => {
       const data = doc.data() ?? {};
       return {
@@ -811,12 +829,147 @@ export async function resolveNowPlaying(nowIso?: string | null) {
       };
     })
     .filter((item) => item.isEnabled !== false && Number(item.durationSeconds ?? 0) > 0);
+}
+
+function isPlayableMediaData(data: Record<string, unknown>) {
+  const status = String(data.status ?? (data.isActive === false ? 'INACTIVE' : 'ACTIVE')).toUpperCase();
+  return data.isActive !== false && status === 'ACTIVE';
+}
+
+function firestoreMillis(value: unknown) {
+  if (typeof value === 'object' && value !== null && 'toMillis' in value && typeof (value as Timestamp).toMillis === 'function') {
+    return (value as Timestamp).toMillis();
+  }
+
+  return 0;
+}
+
+async function loadProgramMediaFallbackItems(
+  programId: string | null,
+  blockStartSeconds: number,
+  blockEndSeconds: number
+): Promise<EnabledPlaybackItem[]> {
+  if (!programId) {
+    return [];
+  }
+
+  const snapshot = await getDb().collection('media').where('programId', '==', programId).get();
+  const blockDurationSeconds = Math.max(1, blockEndSeconds - blockStartSeconds);
+
+  return snapshot.docs
+    .map((doc) => ({ id: doc.id, data: doc.data() ?? {} }))
+    .filter(({ data }) => isPlayableMediaData(data))
+    .sort((a, b) => {
+      const orderDiff = Number(a.data.order ?? a.data.orderIndex ?? 0) - Number(b.data.order ?? b.data.orderIndex ?? 0);
+      if (orderDiff !== 0) return orderDiff;
+
+      const createdDiff = firestoreMillis(a.data.createdAt) - firestoreMillis(b.data.createdAt);
+      if (createdDiff !== 0) return createdDiff;
+
+      return String(a.data.title ?? '').localeCompare(String(b.data.title ?? ''));
+    })
+    .map(({ id, data }, index) => ({
+      id: `program-media-${id}`,
+      isEnabled: true,
+      durationSeconds: Number(data.durationSeconds ?? 0) > 0 ? Number(data.durationSeconds) : blockDurationSeconds,
+      mediaId: id,
+      mediaTitle: typeof data.title === 'string' ? data.title : `Mídia ${index + 1}`,
+      notes: null,
+      sourceType: typeof data.sourceType === 'string' ? data.sourceType : 'YOUTUBE'
+    }));
+}
+
+async function loadPlayableItemsForBlock(block: PlaybackBlock): Promise<EnabledPlaybackItem[]> {
+  const explicitItems = await loadEnabledPlaybackItems(block.id);
+  if (explicitItems.length) {
+    return explicitItems;
+  }
+
+  const blockStartSeconds = hhmmToSeconds(String(block.startTime ?? '00:00'));
+  const blockEndSeconds = hhmmToSeconds(String(block.endTime ?? '00:00'));
+  return loadProgramMediaFallbackItems(
+    typeof block.programId === 'string' ? block.programId : null,
+    blockStartSeconds,
+    blockEndSeconds
+  );
+}
+
+export async function resolveNowPlaying(nowIso?: string | null) {
+  const institution = { id: 'irmao-aureo', slug: 'irmao-aureo', name: 'Irmão Áureo' };
+  const now = nowIso ? new Date(nowIso) : new Date();
+  if (Number.isNaN(now.getTime())) {
+    throw new HttpsError('invalid-argument', 'Campo now inválido. Use ISO-8601.');
+  }
+
+  const radioNow = resolveRadioDateTimeParts(now);
+  const daySnapshot = await getDb().collection('scheduleBlocks').where('date', '==', radioNow.date).get();
+  const activeBlocks: PlaybackBlock[] = daySnapshot.docs
+    .map((doc) => {
+      const data = doc.data() ?? {};
+      return {
+        id: doc.id,
+        status: data.status,
+        isActive: data.isActive,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        programId: data.programId
+      };
+    })
+    .filter((block) => normalizeScheduleStatus(block.status) === 'ACTIVE' && block.isActive !== false)
+    .sort((a, b) => String(a.startTime ?? '').localeCompare(String(b.startTime ?? '')));
+
+  const activeBlock = activeBlocks.find((block) => {
+    const startSeconds = hhmmToSeconds(String(block.startTime ?? '00:00'));
+    const endSeconds = hhmmToSeconds(String(block.endTime ?? '00:00'));
+    return radioNow.secondsOfDay >= startSeconds && radioNow.secondsOfDay < endSeconds;
+  });
+
+  if (!activeBlock) {
+    const nextBlock = activeBlocks.find((block) => hhmmToSeconds(String(block.startTime ?? '00:00')) > radioNow.secondsOfDay);
+    if (!nextBlock) {
+      return { institution, nowPlaying: null, upNext: [] };
+    }
+
+    const nextBlockStartSeconds = hhmmToSeconds(String(nextBlock.startTime ?? '00:00'));
+    const nextBlockEndSeconds = hhmmToSeconds(String(nextBlock.endTime ?? '00:00'));
+    const nextItems = await loadPlayableItemsForBlock(nextBlock);
+
+    if (!nextItems.length) {
+      return { institution, nowPlaying: null, upNext: [] };
+    }
+
+    const mediaMap = await resolveMediaMetadata(
+      nextItems.slice(0, 5).map((item) => (typeof item.mediaId === 'string' ? item.mediaId : '')).filter(Boolean)
+    );
+
+    let cursorSeconds = nextBlockStartSeconds;
+    const upNext = nextItems.slice(0, 5).map((item) => {
+      const durationSeconds = Math.max(1, Number(item.durationSeconds ?? 0));
+      const itemStartSeconds = cursorSeconds;
+      const itemEndSeconds = Math.min(itemStartSeconds + durationSeconds, nextBlockEndSeconds);
+      cursorSeconds = itemEndSeconds;
+      const metadata = typeof item.mediaId === 'string' ? mediaMap.get(item.mediaId) : null;
+
+      return {
+        id: item.id,
+        title: (metadata?.title as string | null) ?? (typeof item.mediaTitle === 'string' ? item.mediaTitle : null) ?? (typeof item.notes === 'string' ? item.notes : 'Sem título'),
+        startTime: secondsToHHMM(itemStartSeconds),
+        startsAt: addSecondsIso(now, itemStartSeconds - radioNow.secondsOfDay),
+        endsAt: addSecondsIso(now, itemEndSeconds - radioNow.secondsOfDay)
+      };
+    });
+
+    return { institution, nowPlaying: null, upNext };
+  }
+
+  const enabledItems = await loadPlayableItemsForBlock(activeBlock);
 
   if (!enabledItems.length) {
     return { institution, nowPlaying: null, upNext: [] };
   }
 
   const blockStartSeconds = hhmmToSeconds(String(activeBlock.startTime ?? '00:00'));
+  const blockEndSeconds = hhmmToSeconds(String(activeBlock.endTime ?? '00:00'));
   const elapsedSeconds = Math.max(0, radioNow.secondsOfDay - blockStartSeconds);
 
   let accumulated = 0;
@@ -844,8 +997,8 @@ export async function resolveNowPlaying(nowIso?: string | null) {
       .slice(0, index)
       .reduce((sum, current) => sum + Number(current.durationSeconds ?? 0), 0);
     const itemStartSeconds = blockStartSeconds + startOffset;
-    const startHour = Math.floor(itemStartSeconds / 3600) % 24;
-    const startMinute = Math.floor((itemStartSeconds % 3600) / 60);
+    const durationSeconds = Math.max(1, Number(item.durationSeconds ?? 0));
+    const itemEndSeconds = Math.min(itemStartSeconds + durationSeconds, blockEndSeconds);
     const metadata = typeof item.mediaId === 'string' ? mediaMap.get(item.mediaId) : null;
 
     return {
@@ -855,8 +1008,15 @@ export async function resolveNowPlaying(nowIso?: string | null) {
       sourceType: (metadata?.sourceType as string | null) ?? (typeof item.sourceType === 'string' ? item.sourceType : null),
       mediaType: (metadata?.mediaType as string | null) ?? null,
       youtubeVideoId: (metadata?.youtubeVideoId as string | null) ?? null,
+      youtubeUrl: (metadata?.youtubeUrl as string | null) ?? null,
+      embedUrl: (metadata?.embedUrl as string | null) ?? null,
       publicUrl: (metadata?.publicUrl as string | null) ?? null,
-      startTime: `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}`
+      durationSeconds,
+      itemStartSeconds,
+      itemEndSeconds,
+      startTime: secondsToHHMM(itemStartSeconds),
+      startsAt: addSecondsIso(now, itemStartSeconds - radioNow.secondsOfDay),
+      endsAt: addSecondsIso(now, itemEndSeconds - radioNow.secondsOfDay)
     };
   });
 
@@ -864,19 +1024,28 @@ export async function resolveNowPlaying(nowIso?: string | null) {
   const nowPlaying = currentItem ? {
     source: currentItem.sourceType ?? 'YOUTUBE',
     title: currentItem.title,
+    itemId: currentItem.id,
+    startedAt: currentItem.startsAt,
+    endsAt: currentItem.endsAt,
+    playbackOffsetSeconds: Math.max(0, radioNow.secondsOfDay - currentItem.itemStartSeconds),
+    durationSeconds: currentItem.durationSeconds,
     media: {
       id: currentItem.mediaId ?? currentItem.id,
       title: currentItem.title,
       sourceType: currentItem.sourceType ?? 'YOUTUBE',
       mediaType: currentItem.mediaType ?? 'UNKNOWN',
       youtubeVideoId: currentItem.youtubeVideoId,
+      youtubeUrl: currentItem.youtubeUrl,
+      embedUrl: currentItem.embedUrl,
       publicUrl: currentItem.publicUrl
     }
   } : null;
   const upNext = timelineItems.slice(currentIndex + 1, currentIndex + 6).map((item) => ({
     id: item.id,
     title: item.title,
-    startTime: item.startTime
+    startTime: item.startTime,
+    startsAt: item.startsAt,
+    endsAt: item.endsAt
   }));
 
   return {

@@ -18,6 +18,7 @@ import { db } from '@/lib/firebase';
 import { functions } from '@/lib/firebase';
 import type { ProgramStatus } from '@/types/program';
 import type { AdminMediaRecord, MediaStatus } from '@/types/media';
+import type { AdminPresenterRecord, PresenterStatus } from '@/types/presenter';
 import type { NowPlayingResponse } from '@/types/api';
 import type {
   CreateScheduleBlockPayload,
@@ -373,6 +374,42 @@ async function getAdminPresenters() {
   });
 }
 
+async function getAdminPresenterRecords(): Promise<AdminPresenterRecord[]> {
+  const [presentersSnapshot, programsSnapshot] = await Promise.all([
+    getDocs(query(collection(db, 'presenters'), orderBy('name', 'asc'))),
+    getDocs(query(collection(db, 'programs'), orderBy('title', 'asc')))
+  ]);
+
+  const programsByPresenterId = new Map<string, string[]>();
+  programsSnapshot.docs.forEach((programDoc: { data: () => Record<string, unknown> }) => {
+    const data = programDoc.data();
+    const presenterId = typeof data.presenterId === 'string' ? data.presenterId : null;
+    const title = String(data.title ?? '').trim();
+    if (!presenterId || !title) {
+      return;
+    }
+
+    const current = programsByPresenterId.get(presenterId) ?? [];
+    current.push(title);
+    programsByPresenterId.set(presenterId, current);
+  });
+
+  return presentersSnapshot.docs.map((item: { id: string; data: () => Record<string, unknown> }) => {
+    const data = item.data();
+    const status = normalizePresenterStatus(data.status, data.isActive);
+
+    return {
+      id: item.id,
+      name: String(data.name ?? 'Sem nome'),
+      shortBio: String(data.shortBio ?? data.bio ?? ''),
+      photoUrl: String(data.photoUrl ?? data.image ?? ''),
+      status,
+      isActive: mapPresenterActivity(status),
+      programTitles: programsByPresenterId.get(item.id) ?? []
+    };
+  });
+}
+
 function slugifyProgramTitle(value: string) {
   return value
     .normalize('NFD')
@@ -387,6 +424,17 @@ function normalizeProgramStatus(value: unknown): ProgramStatus {
   if (normalized === 'ACTIVE' || normalized === 'ATIVO') return 'ACTIVE';
   if (normalized === 'INACTIVE' || normalized === 'INATIVO') return 'INACTIVE';
   return 'DRAFT';
+}
+
+function normalizePresenterStatus(value: unknown, isActive?: unknown): PresenterStatus {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'INACTIVE' || normalized === 'INATIVO') return 'INACTIVE';
+  if (normalized === 'ACTIVE' || normalized === 'ATIVO') return 'ACTIVE';
+  return isActive === false ? 'INACTIVE' : 'ACTIVE';
+}
+
+function mapPresenterActivity(status: PresenterStatus) {
+  return status === 'ACTIVE';
 }
 
 function parseProgramTags(value: unknown): string[] {
@@ -630,6 +678,73 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
     if (method === 'GET' && path === '/presenters') {
       return await withTimeout(getAdminPresenters()) as T;
+    }
+
+    if (method === 'GET' && path === '/admin/presenters') {
+      return await withTimeout(getAdminPresenterRecords()) as T;
+    }
+
+    if (method === 'POST' && path === '/presenters') {
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const name = String(payload.name ?? '').trim();
+      if (!name) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Nome é obrigatório para salvar apresentador.' });
+      }
+
+      const status = normalizePresenterStatus(payload.status);
+      const presenterRef = await addDoc(collection(db, 'presenters'), {
+        name,
+        shortBio: String(payload.shortBio ?? '').trim(),
+        photoUrl: String(payload.photoUrl ?? '').trim(),
+        status,
+        isActive: mapPresenterActivity(status),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: presenterRef.id } as T);
+    }
+
+    if (method === 'PUT' && path.startsWith('/presenters/')) {
+      const presenterId = path.replace('/presenters/', '').trim();
+      if (!presenterId || presenterId.includes('/')) {
+        throw new ApiError({ code: 'HTTP_ERROR', status: 400, message: 'Apresentador inválido para atualização.' });
+      }
+
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const name = String(payload.name ?? '').trim();
+      if (!name) {
+        throw new ApiError({ code: 'INVALID_RESPONSE', message: 'Nome é obrigatório para salvar apresentador.' });
+      }
+
+      const status = normalizePresenterStatus(payload.status);
+      await updateDoc(doc(db, 'presenters', presenterId), {
+        name,
+        shortBio: String(payload.shortBio ?? '').trim(),
+        photoUrl: String(payload.photoUrl ?? '').trim(),
+        status,
+        isActive: mapPresenterActivity(status),
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: presenterId } as T);
+    }
+
+    if (method === 'POST' && path.endsWith('/status') && path.startsWith('/presenters/')) {
+      const presenterId = path.replace('/presenters/', '').replace('/status', '').trim();
+      if (!presenterId) {
+        throw new ApiError({ code: 'HTTP_ERROR', status: 400, message: 'Apresentador inválido para alteração de status.' });
+      }
+
+      const payload = init?.body ? JSON.parse(init.body as string) as Record<string, unknown> : {};
+      const status = normalizePresenterStatus(payload.status);
+      await updateDoc(doc(db, 'presenters', presenterId), {
+        status,
+        isActive: mapPresenterActivity(status),
+        updatedAt: serverTimestamp()
+      });
+
+      return ({ id: presenterId, status } as T);
     }
 
     if (method === 'POST' && path === '/programs') {

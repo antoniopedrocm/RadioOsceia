@@ -6,3 +6,5 @@ backend/dist/
 backend/storage/
 .env
 backend/.env
+.firebase/
+functions/lib/

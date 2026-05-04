@@ -27,6 +27,22 @@ function toWeekStart(date: Date) {
   return utc.toISOString().slice(0, 10);
 }
 
+function getBlockItemsLabel(block: ScheduleBlockRecord) {
+  if (block.items.length > 0) {
+    return String(block.items.length);
+  }
+
+  return block.programId ? 'mídias do programa' : '0';
+}
+
+function getBlockDurationLabel(block: ScheduleBlockRecord) {
+  if (block.items.length > 0) {
+    return formatDurationSeconds(block.totalDurationSeconds);
+  }
+
+  return block.programId ? 'auto pelo programa' : formatDurationSeconds(block.totalDurationSeconds);
+}
+
 export function ScheduleAdminPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
   const [viewMode, setViewMode] = useState<'DAY' | 'WEEK'>('DAY');
@@ -185,7 +201,7 @@ export function ScheduleAdminPage() {
                     </div>
                     <button className="mt-2 text-left" onClick={() => setSelectedBlockId(block.id)}>
                       <p className="font-medium">{block.title}</p>
-                      <p className="text-sm text-muted-foreground">Programa: {block.programTitle ?? 'Sem vínculo'} • Itens: {block.items.length} • Duração: {formatDurationSeconds(block.totalDurationSeconds)}</p>
+                      <p className="text-sm text-muted-foreground">Programa: {block.programTitle ?? 'Sem vínculo'} • Itens: {getBlockItemsLabel(block)} • Duração: {getBlockDurationLabel(block)}</p>
                     </button>
                   </div>
                 )) : <EmptyState title="Nenhum bloco para o dia" description="Crie um novo agendamento para iniciar a grade." />
@@ -213,7 +229,7 @@ export function ScheduleAdminPage() {
                 <>
                   <div className="rounded-lg bg-primary/5 p-3">
                     <p className="font-medium">{selectedBlock.title}</p>
-                    <p className="text-muted-foreground">{selectedBlock.items.length} itens • total {formatDurationSeconds(calculateQueueDuration(selectedBlock.items))}</p>
+                    <p className="text-muted-foreground">{getBlockItemsLabel(selectedBlock)} • total {getBlockDurationLabel(selectedBlock)}</p>
                   </div>
                   {selectedBlock.items.length ? selectedBlock.items.map((item, index) => (
                     <div key={item.id} className="rounded-lg border p-2">
@@ -224,7 +240,13 @@ export function ScheduleAdminPage() {
                         <Button size="sm" variant="outline" onClick={() => handleReorder('down', index)}>↓</Button>
                       </div>
                     </div>
-                  )) : <p className="text-slate-500">Fila vazia para este bloco.</p>}
+                  )) : (
+                    <p className="text-slate-500">
+                      {selectedBlock.programId
+                        ? 'Fila manual vazia. Na transmissão, serão usadas as mídias ativas vinculadas ao programa.'
+                        : 'Fila vazia para este bloco.'}
+                    </p>
+                  )}
                 </>
               ) : <p className="text-slate-500">Selecione um bloco da grade para ver a fila.</p>}
 
@@ -244,7 +266,12 @@ export function ScheduleAdminPage() {
         mode={modalMode ?? 'create'}
         initialBlock={modalBlock}
         programs={programsState.data.map((program) => ({ id: program.id, title: program.title }))}
-        mediaOptions={mediaState.data.map((media) => ({ id: media.id, title: media.title, durationSeconds: media.durationSeconds }))}
+        mediaOptions={mediaState.data.map((media) => ({
+          id: media.id,
+          title: media.title,
+          programId: media.programId ?? null,
+          durationSeconds: media.durationSeconds
+        }))}
         onClose={() => setModalMode(null)}
         onSubmitCreate={handleCreate}
         onSubmitUpdate={handleUpdate}
