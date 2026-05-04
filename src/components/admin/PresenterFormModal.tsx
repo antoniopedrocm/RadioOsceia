@@ -29,7 +29,6 @@ export function PresenterFormModal({
   onSubmit
 }: PresenterFormModalProps) {
   const [form, setForm] = useState<PresenterFormValues>(initialForm);
-  const [photoMode, setPhotoMode] = useState<'url' | 'upload'>('url');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadPreviewUrl, setUploadPreviewUrl] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -55,7 +54,6 @@ export function PresenterFormModal({
     setIsSubmitting(false);
     setUploadFile(null);
     setUploadPreviewUrl('');
-    setPhotoMode('url');
   }, [initialPresenter, isOpen, mode]);
 
   useEffect(() => {
@@ -89,7 +87,7 @@ export function PresenterFormModal({
     try {
       let nextPhotoUrl = form.photoUrl.trim();
 
-      if (photoMode === 'upload' && uploadFile) {
+      if (uploadFile) {
         nextPhotoUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
@@ -149,31 +147,14 @@ export function PresenterFormModal({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Foto</Label>
-              <div className="flex gap-2">
-                <Button type="button" variant={photoMode === 'upload' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoMode('upload')} disabled={isSubmitting}>Upload</Button>
-                <Button type="button" variant={photoMode === 'url' ? 'default' : 'outline'} size="sm" onClick={() => setPhotoMode('url')} disabled={isSubmitting}>URL</Button>
-              </div>
-            </div>
-
-            {photoMode === 'url' ? (
-              <Input
-                id="presenter-photo"
-                value={form.photoUrl}
-                onChange={(event) => updateField('photoUrl', event.target.value)}
-                placeholder="https://..."
-                disabled={isSubmitting}
-              />
-            ) : (
-              <Input
-                id="presenter-photo-upload"
-                type="file"
-                accept="image/*"
-                onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
-                disabled={isSubmitting}
-              />
-            )}
+            <Label htmlFor="presenter-photo-upload">Foto (upload)</Label>
+            <Input
+              id="presenter-photo-upload"
+              type="file"
+              accept="image/*"
+              onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+              disabled={isSubmitting}
+            />
           </div>
 
           <div className="space-y-2">
@@ -187,9 +168,9 @@ export function PresenterFormModal({
             />
           </div>
 
-          {(photoMode === 'upload' ? uploadPreviewUrl : form.photoUrl) ? (
+          {(uploadPreviewUrl || form.photoUrl) ? (
             <div className="flex items-center gap-3 rounded-lg border bg-slate-50 p-3">
-              <img src={photoMode === 'upload' ? uploadPreviewUrl : form.photoUrl} alt="" className="h-16 w-16 rounded-full object-cover" />
+              <img src={uploadPreviewUrl || form.photoUrl} alt="" className="h-16 w-16 rounded-full object-cover" />
               <p className="text-sm text-muted-foreground">Prévia da foto cadastrada.</p>
             </div>
           ) : null}
